@@ -103,6 +103,7 @@ class CreditsTest(unittest.TestCase):
         by = {p["name"]: p for p in load_credits()}
         for name, lic in (("amd-debug-tools", "MIT"), ("amdgpu_top", "MIT"), ("LACT", "MIT"),
                           ("sched-ext/scx", "GPL-2.0"), ("scx-loader", "GPL-2.0"), ("psi-notify", "MIT"),
+                          ("uresourced", "LGPL-2.1-or-later"),
                           ("bpftune", "GPL-2.0 WITH Linux-syscall-note"), ("btrfsd", "LGPL-2.1"),
                           ("Performance Co-Pilot", "GPL-2.0-or-later AND LGPL-2.1-or-later AND CC-BY-3.0")):
             self.assertEqual(by[name]["license"], lic)

@@ -132,6 +132,13 @@
    "group": "integrates"
   },
   {
+   "name": "uresourced",
+   "license": "LGPL-2.1-or-later",
+   "url": "https://gitlab.freedesktop.org/benzea/uresourced",
+   "role": "Gives the active desktop user's session more CPU, memory and I/O weight",
+   "group": "integrates"
+  },
+  {
    "name": "profile-sync-daemon",
    "license": "MIT",
    "url": "https://github.com/graysky2/profile-sync-daemon",
