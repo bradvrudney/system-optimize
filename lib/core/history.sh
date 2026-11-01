@@ -114,7 +114,7 @@ hist_insert() {
         for f in "${fields[@]}"; do vals+="${vals:+,}$(_hist_q "$f")"; done
         sql+="INSERT INTO $table VALUES ($vals);"
       done
-      _hist_sql "$dir" "PRAGMA busy_timeout=5000;${sql}COMMIT;" ;;
+      _hist_sql "$dir" "PRAGMA busy_timeout=5000;${sql}COMMIT;" >/dev/null ;;
     text)
       for row in "$@"; do
         tsv_split "$row"
@@ -176,7 +176,7 @@ hist_prune() {
         DELETE FROM tune WHERE CAST(epoch AS INTEGER) < $cut;
         DELETE FROM changes WHERE CAST(epoch AS INTEGER) < $cut AND undone_epoch != '-';
         DELETE FROM runs WHERE CAST(epoch AS INTEGER) < $cut AND id NOT IN (SELECT snapshot FROM changes);
-        COMMIT;" ;;
+        COMMIT;" >/dev/null ;;
     text)
       for t in benchmarks drift tune; do
         _hist_text_filter "$dir/$t.tsv" "\$$(_hist_col "$t" epoch) >= $cut"
@@ -263,7 +263,7 @@ history_record_undo() {
     awkset+="$id:$n=$when "
   done
   case "$(hist_backend "$dir")" in
-    sqlite) _hist_sql "$dir" "PRAGMA busy_timeout=5000; BEGIN;${sql}COMMIT;" ;;
+    sqlite) _hist_sql "$dir" "PRAGMA busy_timeout=5000; BEGIN;${sql}COMMIT;" >/dev/null ;;
     text)
       awk -F '\t' -v OFS='\t' -v set="$awkset" -v epoch="$epoch" '
         BEGIN { n = split(set, a, " "); for (i = 1; i <= n; i++) { k = a[i]; sub(/=.*/, "", k); v = a[i]; sub(/^[^=]*=/, "", v); u[k] = v } }

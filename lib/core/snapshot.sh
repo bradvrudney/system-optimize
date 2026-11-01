@@ -100,11 +100,16 @@ snap_begin() {
 # snap_id: the current snapshot's name, or empty.
 snap_id() { [ -z "$SO_SNAP" ] || printf '%s\n' "${SO_SNAP##*/}"; }
 
-# snap_has KIND TARGET: already recorded by this run (the first record of a
-# target holds the state before the run, so later ones are dropped).
+# snap_has KIND TARGET: already recorded by the step running now (its first
+# record of a target holds the state before the step, so later ones are
+# dropped). Two steps that change the same target (noatime and btrfs both
+# edit /etc/fstab) each keep their own record: undoing the run goes newest
+# first and ends at the state before the run, and undoing one step puts
+# back the state before that step.
 snap_has() {
   [ -n "$SO_SNAP" ] || return 1
-  grep -qF -- "$1"$'\t'"$2"$'\t' "$SO_SNAP/manifest"
+  awk -F '\t' -v k="$1" -v t="$2" -v s="${SO_CURRENT_STEP:--}" \
+    '$1 == k && $2 == t && $4 == s { found = 1; exit } END { exit !found }' "$SO_SNAP/manifest"
 }
 
 # snap_record KIND TARGET BEFORE [AFTER]: add a manifest line for the step
