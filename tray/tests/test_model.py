@@ -75,12 +75,15 @@ class ModelTest(unittest.TestCase):
 class SettingsTest(unittest.TestCase):
     def test_round_trip_and_validation(self):
         p = os.path.join(tempfile.mkdtemp(), "x", "tray.conf")
-        self.assertEqual(settings.load(p), {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1", "PSI_ALERTS": "1"})
+        self.assertEqual(settings.load(p), settings.DEFAULTS)
+        self.assertEqual(settings.DEFAULTS, {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1",
+                                             "PSI_ALERTS": "1", "HISTORY_SOURCE": "auto"})
         settings.save("THEME", "dark", p)
         settings.save("EXPANDED", "memory,storage", p)
         settings.save("THEME", "light", p)
         settings.save("RECORD_HISTORY", "0", p)
-        self.assertEqual(settings.load(p), {"THEME": "light", "EXPANDED": "memory,storage", "RECORD_HISTORY": "0", "PSI_ALERTS": "1"})
+        self.assertEqual(settings.load(p), dict(settings.DEFAULTS, THEME="light", EXPANDED="memory,storage",
+                                                RECORD_HISTORY="0"))
         with self.assertRaises(ValueError):
             settings.save("RECORD_HISTORY", "yes", p)
         with self.assertRaises(ValueError):

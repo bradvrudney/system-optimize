@@ -214,6 +214,22 @@ class PanelTest(unittest.TestCase):
         self.panel._on_sample()
         self.assertEqual(self.panel.res_stats["now"].text(), "50 °C")
 
+    def test_resource_page_reads_performance_co_pilot(self):
+        from so_tray.history import History
+
+        class FakePcp:
+            def load(self):
+                h = History(":memory:")
+                t = time.time() - 20 * 86400
+                while t < time.time():
+                    h.record({"cpu": {"percent": 12}}, ts=t)
+                    t += 3600
+                return h, time.time() - 20 * 86400
+        self.ctl.pcp = FakePcp()
+        self.panel.open_resource("cpu")
+        self.assertTrue(self.wait(lambda: "Performance Co-Pilot" in self.panel.res_note.text()))
+        self.assertEqual(self.panel.res_stats["avg"].text(), "12%")
+
     def test_turning_recording_off(self):
         from so_tray import settings
         from so_tray.history import Recorder

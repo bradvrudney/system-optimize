@@ -66,6 +66,7 @@ class Controller(QtCore.QObject):
         self.monitor = monitor
         self.agent_factory = agent_factory  # () -> (Agent, client) or None when not installed
         self.recorder = None                # history.Recorder when this process keeps resource averages
+        self.pcp = None                     # pcp.PcpSource: Performance Co-Pilot's archives, when installed
         self.info = {"found": False, "features": [], "capabilities": []}
         self.history = {"benchmarks": [], "changes": [], "available": False}
         self.sample = None
@@ -754,14 +755,19 @@ class Panel(QtWidgets.QWidget):
 
     def _load_resource(self, name):
         from .history import History, resource_report
+        from .pcp import pick_history
         changes = self.ctl.history.get("changes") or []
+        source_setting = self.settings.get("HISTORY_SOURCE", "auto")
 
         def work():
-            h = History()
+            own = History()
             try:
-                return resource_report(h, name, changes)
+                hist, source = pick_history(name, own, self.ctl.pcp, source_setting)
+                rep = resource_report(hist, name, changes)
+                rep["source"] = source
+                return rep
             finally:
-                h.close()
+                own.close()
 
         def done(res):
             if self.resource_name == name and not isinstance(res, Exception):
@@ -800,8 +806,11 @@ class Panel(QtWidgets.QWidget):
         else:
             empty = "Recording. The first daily average appears after the first day."
         self.res_chart.set(points, markers, periods, empty_text=empty)
-        self.res_note.setText("Dashed lines: the average between setting changes. Markers: when settings changed."
-                              if points else "")
+        note = ("Dashed lines: the average between setting changes. Markers: when settings changed."
+                if points else "")
+        if rep.get("source") == "pcp":
+            note = (note + " " if note else "") + "From Performance Co-Pilot's archives."
+        self.res_note.setText(note)
         self.res_log.setRowCount(0)
         for eff in reversed(rep["effects"]):
             r = self.res_log.rowCount()

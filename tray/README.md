@@ -209,7 +209,7 @@ you ever want it.
 ## Resource history
 
 The tray records what the tiles show (CPU load, memory, CPU temperature,
-disk I/O) once a minute into `~/.local/state/system-optimize-tray/resources.db`,
+disk I/O, and GPU busy and GPU memory where there is a GPU) once a minute into `~/.local/state/system-optimize-tray/resources.db`,
 as hourly and daily averages with minimum and maximum. Hourly rows are kept
 for 90 days and daily rows for good, so the file stays small (about 24 rows
 a day per resource). Nothing leaves the computer.
@@ -225,7 +225,17 @@ effect compares the 7 days before it with the 7 days after; changes made in
 the same run count as one. These are averages of a machine in daily use, so
 a change in workload moves them as much as a setting does.
 
-`system-optimize-tray --resource cpu|memory|cpu_temp|disk` opens a resource
+### From Performance Co-Pilot
+
+When Performance Co-Pilot is recording this machine (`tray/install.sh
+--monitoring`, or `sudo dnf install pcp-zeroconf pcp-system-tools`), the CPU,
+memory and disk pages read its archives in `/var/log/pcp/pmlogger` with
+`pmrep` whenever they reach back further than the tray's own recording, and
+say so under the chart. The GPU and temperature pages keep using the tray's
+own history. `HISTORY_SOURCE=tray` turns this off. The tray only reads the
+archives; it never starts or configures PCP.
+
+`system-optimize-tray --resource cpu|memory|cpu_temp|disk|gpu|gpu_mem` opens a resource
 page directly; the GNOME menu's readouts and its Resource history submenu do
 the same.
 
@@ -238,6 +248,7 @@ the same.
 | `THEME` | `system` | `light`, `dark` or `system` (also in the panel's ◐ menu) |
 | `EXPANDED` | empty | categories you opened, e.g. `memory,storage` |
 | `RECORD_HISTORY` | `1` | keep resource averages; `0` to stop |
+| `HISTORY_SOURCE` | `auto` | `tray` to never read Performance Co-Pilot's archives |
 | `PSI_ALERTS` | `1` | `0` turns off pressure notifications (the dashboard line stays) |
 
 ## Development

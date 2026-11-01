@@ -22,6 +22,8 @@ METRICS = {
     "memory": ("Memory used", "%", ("memory", "percent"), "lower"),
     "cpu_temp": ("CPU temperature", "°C", ("temperature", "cpu"), "lower"),
     "disk": ("Disk I/O", "MB/s", lambda s: _sum(_pick(s, ("disk", "read_mbs")), _pick(s, ("disk", "write_mbs"))), None),
+    "gpu": ("GPU busy", "%", ("gpu", "busy_percent"), None),
+    "gpu_mem": ("GPU memory used", "%", ("gpu", "mem_percent"), None),
 }
 HOURLY_DAYS = 90
 SCHEMA = """
@@ -69,6 +71,10 @@ def day_start(ts):
 class History:
     def __init__(self, path=None):
         self.path = path or default_path()
+        if self.path == ":memory:":     # a scratch copy, e.g. Performance Co-Pilot's archives (pcp.py)
+            self.db = sqlite3.connect(self.path, check_same_thread=False)
+            self.db.executescript(SCHEMA)
+            return
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=10)
         self.db.executescript(SCHEMA)

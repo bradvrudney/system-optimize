@@ -55,6 +55,7 @@ class MakeInstallTest(unittest.TestCase):
         self.assertTrue(any(f.endswith("/usr/bin/system-optimize-tray") for f in files))
         self.assertTrue(any(f.endswith("/system-optimize-helper") for f in files))
         self.assertTrue(any(f.endswith("/extension.js") for f in files))
+        self.assertTrue(any(f.endswith("/so_tray/pcp.py") for f in files))
         subprocess.run(common + ["uninstall-extension"], check=True, capture_output=True)
         self.assertFalse(any(f.endswith("/extension.js") for _, _, fs in os.walk(dest) for f in fs))
         subprocess.run(common + ["uninstall"], check=True, capture_output=True)

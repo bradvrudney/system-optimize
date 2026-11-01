@@ -98,7 +98,9 @@ test('readout lines open resource pages', async () => {
     assert.equal(readoutResource(lines[1]), 'memory');
     assert.equal(readoutResource(lines[3]), null);
     assert.equal(readoutResource(undefined), null);
-    assert.deepEqual(RESOURCES.map(r => r[0]), ['cpu', 'memory', 'cpu_temp', 'disk']);
+    assert.deepEqual(RESOURCES.map(r => r[0]), ['cpu', 'memory', 'cpu_temp', 'disk', 'gpu', 'gpu_mem']);
+    assert.equal(readoutResource('GPU memory 9.2 / 32.0 GB (29%)'), 'gpu_mem');
+    assert.equal(readoutResource('GPU 48°C · NVMe 41°C'), null);
 });
 
 test('gpuMemoryLine and the readout line', () => {

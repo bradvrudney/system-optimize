@@ -260,6 +260,8 @@ export const RESOURCES = [
     ['memory', 'Memory'],
     ['cpu_temp', 'CPU temperature'],
     ['disk', 'Disk I/O'],
+    ['gpu', 'GPU busy'],
+    ['gpu_mem', 'GPU memory'],
 ];
 
 // Which resource page a readout line opens, or null.
@@ -268,5 +270,7 @@ export function readoutResource(line) {
         return 'cpu';
     if (/^Memory /.test(line ?? ''))
         return 'memory';
+    if (/^GPU memory /.test(line ?? ''))
+        return 'gpu_mem';
     return null;
 }

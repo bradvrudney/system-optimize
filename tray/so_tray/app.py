@@ -93,6 +93,9 @@ class App(QtCore.QObject):
             from .history import Recorder
             recorder = Recorder()
         self.ctl.recorder = recorder
+        if os.environ.get("SO_ROOT", "/") == "/":
+            from .pcp import PcpSource
+            self.ctl.pcp = PcpSource()
         self.panel = Panel(self.ctl)
         self.panel.setWindowIcon(load_icon())
         self.panel.text_requested.connect(self.show_text)
