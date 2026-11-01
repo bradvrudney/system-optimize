@@ -19,6 +19,11 @@
 # battery for a laptop, wireless mice included. Virtual machines are
 # skipped. The profile before is recorded for --undo.
 
+step_def cpu default tweak_cpu 'bench' \
+  "Performance power profile on mains power" \
+  "Switches power-profiles-daemon or tuned to the performance profile on a desktop." \
+  power
+
 SO_CPU_PROFILE_PPD=performance
 SO_CPU_PROFILE_TUNED=throughput-performance
 
@@ -53,7 +58,7 @@ _cpu_via_ppd() {
     step_dry "would switch the power profile $cur -> $SO_CPU_PROFILE_PPD (powerprofilesctl)"
     return 0
   fi
-  snap_record ppd - "$cur" || return 1
+  snap_record ppd - "$cur" "$SO_CPU_PROFILE_PPD" || return 1
   run powerprofilesctl set "$SO_CPU_PROFILE_PPD" || { step_fail "powerprofilesctl set $SO_CPU_PROFILE_PPD failed"; return 1; }
   step_updated "power profile $cur -> $SO_CPU_PROFILE_PPD (powerprofilesctl)"
 }
@@ -72,7 +77,7 @@ _cpu_via_tuned() {
     step_dry "would switch the tuned profile $cur -> $SO_CPU_PROFILE_TUNED"
     return 0
   fi
-  snap_record tuned - "$cur" || return 1
+  snap_record tuned - "$cur" "$SO_CPU_PROFILE_TUNED" || return 1
   run tuned-adm profile "$SO_CPU_PROFILE_TUNED" || { step_fail "tuned-adm profile $SO_CPU_PROFILE_TUNED failed"; return 1; }
   step_updated "tuned profile $cur -> $SO_CPU_PROFILE_TUNED"
 }

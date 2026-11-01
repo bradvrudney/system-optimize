@@ -93,7 +93,7 @@ setup() { setup_sandbox; }
   grep -q 'zram-size = min(ram / 2, 8192)' "$SANDBOX/etc/systemd/zram-generator.conf"
   local snap
   snap=$(snapshots | tail -n1)
-  grep -q $'^pkg\tearlyoom\tinstalled$' "$snap/manifest"
+  grep -q $'^pkg\tearlyoom\tinstalled\t' "$snap/manifest"
   grep -q $'^unit\tearlyoom.service\t' "$snap/manifest"
 }
 

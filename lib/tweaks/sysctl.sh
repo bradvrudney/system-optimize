@@ -22,6 +22,11 @@
 #   * Only this file is loaded (sysctl -e -p FILE), not every file on the
 #     system, and an unknown key does not abort the run.
 
+step_def sysctl default tweak_sysctl 'bench' \
+  "Kernel settings sized to RAM and swap" \
+  "Swap, writeback, cache, network and file-watch settings for this machine, in /etc/sysctl.d or a tuned profile." \
+  memory
+
 SO_SYSCTL_CONF=/etc/sysctl.d/99-system-optimize.conf
 
 # _sysctl_bbr_available: does this kernel offer BBR?
@@ -148,10 +153,10 @@ tweak_sysctl() {
   # setting a *_bytes key zeroes its *_ratio partner and the other way round.
   for key in "${lines[@]}"; do
     IFS=$'\t' read -r key value mode why cur <<< "$key"
-    snap_record sysctl "$key" "$cur" || return 1
+    snap_record sysctl "$key" "$cur" "$value" || return 1
   done
   for key in vm.dirty_background_ratio vm.dirty_ratio vm.dirty_background_bytes vm.dirty_bytes; do
-    cur=$(sysctl_get "$key") && snap_record sysctl "$key" "$cur"
+    cur=$(sysctl_get "$key") && snap_record sysctl "$key" "$cur" "$cur"
   done
   if ! run sysctl -e -p "$(so_path "$SO_SYSCTL_CONF")" >/dev/null; then
     step_warn "wrote $SO_SYSCTL_CONF but the kernel refused some values (see the log); they apply after a reboot if at all"

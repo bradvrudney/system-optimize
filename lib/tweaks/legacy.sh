@@ -8,6 +8,11 @@
 # udev rules are read in name order, and 99-performance.conf would win over
 # 90-system-optimize.conf). --undo puts them back.
 
+step_def legacy default tweak_legacy '' \
+  "Remove the files of system-optimize 1.x" \
+  "Backs up and removes the three files 1.x wrote; the steps after it write their replacements." \
+  boot
+
 # legacy_files: "PATH<TAB>MARKER" for each file 1.x wrote.
 legacy_files() {
   printf '%s\t%s\n' \

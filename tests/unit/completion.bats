@@ -56,5 +56,6 @@ complete_words() {
   have=$(printf '%s\n' $_so_opts | sort -u | tr '\n' ' ')
   assert_equal "$want" "$have"
   # shellcheck disable=SC2154
-  assert_equal "${SO_STEPS[*]}" "$_so_steps"
+  # shellcheck disable=SC2086
+  assert_equal "${SO_STEPS[*]}" "$(printf '%s ' $_so_steps | sed 's/ $//')"
 }

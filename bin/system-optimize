@@ -62,6 +62,8 @@ source "$SO_ROOT_DIR/lib/core/log.sh"
 source "$SO_ROOT_DIR/lib/core/util.sh"
 # shellcheck source=lib/core/config.sh
 source "$SO_ROOT_DIR/lib/core/config.sh"
+# shellcheck source=lib/core/steps.sh
+source "$SO_ROOT_DIR/lib/core/steps.sh"
 # shellcheck source=lib/core/args.sh
 source "$SO_ROOT_DIR/lib/core/args.sh"
 # shellcheck source=lib/core/sysinfo.sh
@@ -74,22 +76,58 @@ source "$SO_ROOT_DIR/lib/core/runner.sh"
 source "$SO_ROOT_DIR/lib/core/runlog.sh"
 # shellcheck source=lib/core/snapshot.sh
 source "$SO_ROOT_DIR/lib/core/snapshot.sh"
+# shellcheck source=lib/core/json.sh
+source "$SO_ROOT_DIR/lib/core/json.sh"
+# shellcheck source=lib/core/detect.sh
+source "$SO_ROOT_DIR/lib/core/detect.sh"
+# shellcheck source=lib/core/desktop.sh
+source "$SO_ROOT_DIR/lib/core/desktop.sh"
+# shellcheck source=lib/core/history.sh
+source "$SO_ROOT_DIR/lib/core/history.sh"
+# shellcheck source=lib/core/bench.sh
+source "$SO_ROOT_DIR/lib/core/bench.sh"
+# shellcheck source=lib/core/manage.sh
+source "$SO_ROOT_DIR/lib/core/manage.sh"
+# shellcheck source=lib/core/share.sh
+source "$SO_ROOT_DIR/lib/core/share.sh"
+# shellcheck source=lib/core/report.sh
+source "$SO_ROOT_DIR/lib/core/report.sh"
 # shellcheck source=lib/core/selfupdate.sh
 source "$SO_ROOT_DIR/lib/core/selfupdate.sh"
 # shellcheck source=lib/tweaks/legacy.sh
 source "$SO_ROOT_DIR/lib/tweaks/legacy.sh"
 # shellcheck source=lib/tweaks/sysctl.sh
 source "$SO_ROOT_DIR/lib/tweaks/sysctl.sh"
+# shellcheck source=lib/tweaks/memory.sh
+source "$SO_ROOT_DIR/lib/tweaks/memory.sh"
 # shellcheck source=lib/tweaks/io.sh
 source "$SO_ROOT_DIR/lib/tweaks/io.sh"
+# shellcheck source=lib/tweaks/storage.sh
+source "$SO_ROOT_DIR/lib/tweaks/storage.sh"
 # shellcheck source=lib/tweaks/cpu.sh
 source "$SO_ROOT_DIR/lib/tweaks/cpu.sh"
+# shellcheck source=lib/tweaks/scheduler.sh
+source "$SO_ROOT_DIR/lib/tweaks/scheduler.sh"
+# shellcheck source=lib/tweaks/power.sh
+source "$SO_ROOT_DIR/lib/tweaks/power.sh"
 # shellcheck source=lib/tweaks/limits.sh
 source "$SO_ROOT_DIR/lib/tweaks/limits.sh"
 # shellcheck source=lib/tweaks/trim.sh
 source "$SO_ROOT_DIR/lib/tweaks/trim.sh"
+# shellcheck source=lib/tweaks/boot.sh
+source "$SO_ROOT_DIR/lib/tweaks/boot.sh"
+# shellcheck source=lib/tweaks/network.sh
+source "$SO_ROOT_DIR/lib/tweaks/network.sh"
+# shellcheck source=lib/tweaks/display.sh
+source "$SO_ROOT_DIR/lib/tweaks/display.sh"
+# shellcheck source=lib/tweaks/pkgs.sh
+source "$SO_ROOT_DIR/lib/tweaks/pkgs.sh"
+# shellcheck source=lib/tweaks/gpu.sh
+source "$SO_ROOT_DIR/lib/tweaks/gpu.sh"
 # shellcheck source=lib/tweaks/tools.sh
 source "$SO_ROOT_DIR/lib/tweaks/tools.sh"
+# shellcheck source=lib/tweaks/driftwatch.sh
+source "$SO_ROOT_DIR/lib/tweaks/driftwatch.sh"
 # shellcheck source=lib/core/status.sh
 source "$SO_ROOT_DIR/lib/core/status.sh"
 # @@BUNDLE-MODULES-END@@
@@ -134,8 +172,9 @@ preflight() {
     log_error "cannot read $(so_path /proc/meminfo); is /proc mounted?"
     return 1
   fi
-  # --undo only reverses what a run recorded, so it needs no --force.
-  if [ "$SO_IN_CONTAINER" = 1 ] && [ "$SO_ARG_MODE" != undo ]; then
+  # --undo (and --rollback, --confirm) only reverse or keep what a run
+  # recorded, so they need no --force.
+  if [ "$SO_IN_CONTAINER" = 1 ] && ! list_has "undo rollback confirm" "$SO_ARG_MODE"; then
     if [ "$SO_DRY_RUN" = 1 ]; then
       log_warn "running in a container ($SO_CONTAINER_NAME): a real run would refuse without --force"
     elif cfg_bool FORCE; then
@@ -154,22 +193,59 @@ preflight() {
   return 0
 }
 
-# apply_main: the optimisation run.
+# apply_main: the optimisation run (with --benchmark, measured before and
+# after; with --safe-apply, undone later unless confirmed).
 apply_main() {
-  local steps
-  steps=$(for s in "${SO_STEPS[@]}"; do step_enabled "$s" && printf '%s ' "$s"; done)
+  local steps s before_row="" id reboot=""
+  steps=$(steps_selected)
   if [ "$SO_DRY_RUN" != 1 ]; then
     log_info "a snapshot of everything changed is saved first; system-optimize --undo restores it"
-    confirm "Apply the optimizations (${steps% })?" || return 1
+    [ -z "$SO_PROFILE" ] || log_info "profile $SO_PROFILE: ${SO_PROFILE_TITLE[$SO_PROFILE]}"
+    confirm "Apply the optimizations ($steps)?" || return 1
   fi
-  run_step legacy tweak_legacy
-  run_step sysctl tweak_sysctl
-  run_step io tweak_io
-  run_step cpu tweak_cpu
-  run_step limits tweak_limits
-  run_step trim tweak_trim
-  run_step tools tweak_tools
+  if cfg_bool BENCHMARK; then
+    if [ "$SO_DRY_RUN" = 1 ]; then
+      log_info "no benchmark in a dry run"
+    elif bench_run before; then
+      bench_save before
+      before_row=$(bench_row @SNAPSHOT@)
+    fi
+  fi
+  for s in "${SO_STEPS[@]}"; do
+    run_step "$s" "${SO_STEP_FUNC[$s]}"
+  done
+  for ((s = 0; s < ${#SO_STEP_NAMES[@]}; s++)); do
+    if [ "${SO_STEP_RESULTS[s]}" = updated ] && step_has_flag "${SO_STEP_NAMES[s]}" reboot; then
+      reboot+="${reboot:+, }${SO_STEP_NAMES[s]}"
+    fi
+  done
+  [ -z "$reboot" ] || log_warn "reboot to finish: $reboot"
+  if [ -n "$before_row" ]; then
+    id=$(snap_id)
+    if bench_run after "${id:--}"; then
+      log_plain "${C_BOLD}Benchmark${C_RESET} before -> after"
+      bench_print_compare before
+      SO_BENCH_PCT=$(bench_change_pct before)
+      hist_add benchmarks "${before_row/@SNAPSHOT@/${id:--}}" "$(bench_row)"
+    fi
+  fi
+  safe_after_run
   return 0
+}
+
+# run_json: the result of a run that changes things, with --json.
+run_json() {
+  local i sep=""
+  printf '{"mode":%s,"dry_run":%s,"exit_status":%s,"snapshot":%s,"profile":%s,"steps":[' \
+    "$(json_str "$SO_ARG_MODE")" "$(json_bool "$SO_DRY_RUN")" "$1" "$(json_str_or_null "$(snap_id)")" \
+    "$(json_str_or_null "$SO_PROFILE")"
+  for ((i = 0; i < ${#SO_STEP_NAMES[@]}; i++)); do
+    printf '%s{"name":%s,"result":%s,"note":%s}' "$sep" "$(json_str "${SO_STEP_NAMES[i]}")" \
+      "$(json_str "${SO_STEP_RESULTS[i]}")" "$(json_str "${SO_STEP_NOTES[i]}")"
+    sep=","
+  done
+  printf '],"benchmark_change_pct":%s,"safe_apply":%s,"log":%s}\n' "$(json_num "${SO_BENCH_PCT:-}")" \
+    "$(json_str_or_null "${SO_SAFE_STATE:-}")" "$(json_str_or_null "$SO_LOG_FILE")"
 }
 
 main() {
@@ -189,6 +265,7 @@ main() {
 
   [ -n "$SO_CONFIG_FILE" ] && [[ "$SO_CONFIG_FILE" != /* ]] && SO_CONFIG_FILE="$PWD/$SO_CONFIG_FILE"
   [ -n "$SO_LOG_PATH" ] && [[ "$SO_LOG_PATH" != /* ]] && SO_LOG_PATH="$PWD/$SO_LOG_PATH"
+  [ -n "$SO_ARG_FILE" ] && [[ "$SO_ARG_FILE" != /* ]] && SO_ARG_FILE="$PWD/$SO_ARG_FILE"
   config_load
   args_apply || exit 2
 
@@ -203,14 +280,32 @@ main() {
 
   sysinfo_detect
   mode="$SO_ARG_MODE"
+  # Read-only modes: no log, no root, nothing changed.
   case "$mode" in
     status)
+      if [ "$SO_JSON" = 1 ]; then status_json; exit 0; fi
       log_plain "${C_BOLD}$(version_string)${C_RESET}"
       status_main
       exit 0 ;;
-    list-snapshots)
-      list_snapshots_main
-      exit 0 ;;
+    list-snapshots) list_snapshots_main; exit 0 ;;
+    list-steps) list_steps_main; exit 0 ;;
+    describe) describe_main "$SO_ARG_DESCRIBE"; exit 0 ;;
+    history) history_main; exit 0 ;;
+    diff-config) diff_main "$SO_ARG_FILE"; exit $? ;;
+    export) export_main "$SO_ARG_FILE"; exit $? ;;
+    history-prune) hist_prune_main "$SO_ARG_DAYS"; exit $? ;;
+    history-clear) hist_clear; exit $? ;;
+    benchmark-only)
+      runlog_open benchmark "$@"
+      bench_only_main || rc=1
+      runlog_close "$rc"
+      exit "$rc" ;;
+    check-drift)
+      [ "$SO_QUIET" = 1 ] && exec >/dev/null 2>&1
+      runlog_open check-drift "$@"
+      drift_main || rc=1
+      runlog_close "$rc"
+      exit "$rc" ;;
   esac
 
   # --quiet hides third-party output (it is still in the run log). Our own
@@ -226,16 +321,23 @@ main() {
   if preflight; then
     case "$mode" in
       undo) undo_main "$SO_ARG_SNAPSHOT" || rc=1 ;;
+      rollback) rollback_main "$SO_ARG_SNAPSHOT" || rc=1 ;;
+      confirm) confirm_main "$SO_ARG_SNAPSHOT" || rc=1 ;;
+      tune) tune_main || rc=1 ;;
+      import) import_main "$SO_ARG_FILE" || rc=1 ;;
       *) apply_main || rc=1 ;;
     esac
   else
     rc=1
   fi
   summary_print || rc=1
+  SO_RUN_RC="$rc"
+  [ "$SO_DRY_RUN" = 1 ] || history_record_run "$mode"
   if [ -n "$SO_SNAP" ]; then
     log_plain "  snapshot: ${SO_SNAP##*/} (undo: system-optimize --undo ${SO_SNAP##*/})"
   fi
   [ -n "$SO_LOG_FILE" ] && log_plain "  log: $SO_LOG_FILE"
+  [ "$SO_JSON" = 1 ] && run_json "$rc"
   runlog_close "$rc"
   exit "$rc"
 }

@@ -15,7 +15,7 @@ setup() { setup_sandbox; }
   [ "$(cat "$STUB_STATE/ppd")" = performance ]
   # the governor is not touched behind the daemon's back
   [ "$(get /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)" = powersave ]
-  grep -q $'^ppd\t-\tbalanced$' "$(snapshots | tail -n1)/manifest"
+  grep -q $'^ppd\t-\tbalanced\t' "$(snapshots | tail -n1)/manifest"
   run "$SO" -y --only cpu
   assert_output_contains "power profile already performance"
 }
@@ -34,7 +34,7 @@ setup() { setup_sandbox; }
   [ "$status" -eq 0 ]
   assert_output_contains "tuned profile balanced -> throughput-performance"
   [ "$(cat "$STUB_STATE/tuned")" = throughput-performance ]
-  grep -q $'^tuned\t-\tbalanced$' "$(snapshots | tail -n1)/manifest"
+  grep -q $'^tuned\t-\tbalanced\t' "$(snapshots | tail -n1)/manifest"
 }
 
 @test "without either, the governor is written to sysfs until the next reboot" {

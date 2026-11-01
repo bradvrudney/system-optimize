@@ -14,6 +14,11 @@
 # containers and minimal systems) the values are set until the next boot
 # and no rule is written.
 
+step_def io default tweak_io 'bench' \
+  "Disk schedulers and read-ahead" \
+  "none for NVMe, mq-deadline for other SSDs, bfq for spinning disks, kept by a udev rule." \
+  storage
+
 SO_IO_RULE=/etc/udev/rules.d/60-system-optimize-io.rules
 
 io_rule_content() {
