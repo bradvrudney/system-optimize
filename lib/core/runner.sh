@@ -25,19 +25,7 @@ step_warn()    { STEP_RESULT=warn;    STEP_NOTE="${1:-}"; }
 
 SO_ONLY="${SO_ONLY:-}"
 SO_SKIP="${SO_SKIP:-}"
-
-# step_enabled NAME: honours --only/--skip (ONLY/SKIP) for the steps of an
-# optimisation run (SO_STEPS); anything else always runs.
-step_enabled() {
-  list_has "${SO_STEPS[*]-}" "$1" || return 0
-  if [ -n "$SO_SKIP" ] && list_has "$SO_SKIP" "$1"; then
-    return 1
-  fi
-  if [ -n "$SO_ONLY" ] && ! list_has "$SO_ONLY" "$1"; then
-    return 1
-  fi
-  return 0
-}
+SO_CURRENT_STEP=""   # the step running now (recorded with each change)
 
 # runner_record NAME RESULT NOTE
 runner_record() {
@@ -60,18 +48,20 @@ runner_print_result() {
 }
 
 # run_step NAME FUNC [ARGS...]: run one step, record and print its result.
-# A step left out by --only/--skip is not run and not recorded. Returns 1
+# A step this run leaves out (see step_enabled) is not run and not recorded. Returns 1
 # when the step failed, 0 otherwise.
 run_step() {
   local name="$1" func="$2"; shift 2
   local rc=0
   if ! step_enabled "$name"; then
-    log_detail "$name: left out (--only/--skip)"
+    log_detail "$name: not in this run"
     return 0
   fi
   log_step "$name"
   STEP_RESULT=""; STEP_NOTE=""
+  SO_CURRENT_STEP="$name"
   "$func" "$@" || rc=$?
+  SO_CURRENT_STEP=""
   if [ -z "$STEP_RESULT" ]; then
     if [ "$rc" -eq 0 ]; then
       STEP_RESULT=ok

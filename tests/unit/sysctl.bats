@@ -85,9 +85,9 @@ planned() { sysctl_plan | awk -F'\t' -v k="$1" '$1 == k { print $2 }'; }
   [ "$(sysctl_now vm.dirty_ratio)" = 0 ]
   local snap
   snap=$(snapshots | tail -n1)
-  grep -q $'^sysctl\tvm.swappiness\t60$' "$snap/manifest"
-  grep -q $'^sysctl\tvm.dirty_ratio\t20$' "$snap/manifest"
-  grep -q $'^file\t/etc/sysctl.d/99-system-optimize.conf\tabsent$' "$snap/manifest"
+  grep -q $'^sysctl\tvm.swappiness\t60\t' "$snap/manifest"
+  grep -q $'^sysctl\tvm.dirty_ratio\t20\t' "$snap/manifest"
+  grep -q $'^file\t/etc/sysctl.d/99-system-optimize.conf\tabsent\t' "$snap/manifest"
   # the second run keeps the raised limits in the file (they are at the
   # new value now, because of the file) and changes nothing
   cp "$SANDBOX$CONF" "$BATS_TEST_TMPDIR/first"

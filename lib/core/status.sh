@@ -30,6 +30,18 @@ status_main() {
   log_kv "package manager" "$SO_PKG_MANAGER$(pkg_can_install || printf ' (--install-tools only recommends here)')"
   log_kv "init system" "$SO_INIT_SYSTEM"
 
+  n=0
+  while IFS=$'\t' read -r key value; do
+    [ "$n" -gt 0 ] || _status_heading "Hardware (read-only)"
+    n=$((n + 1))
+    log_kv "${key//_/ }" "$value"
+  done < <(hw_facts)
+  mapfile -t found < <(helpers_running)
+  [ ${#found[@]} -eq 0 ] || log_kv "owners running" "${found[*]}"
+  while IFS=$'\t' read -r id line; do
+    log_warn "$line"
+  done < <(so_warnings)
+
   _status_heading "Settings"
   for line in "$(config_system_file)" "${SO_CONFIG_FILE:-$(config_user_file)}"; do
     log_kv "config" "$line$([ -r "$line" ] || printf ' (absent)')"

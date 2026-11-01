@@ -11,6 +11,11 @@
 # Services started by systemd do not read limits.conf (they use
 # DefaultLimitNOFILE); new login sessions pick this up.
 
+step_def limits default tweak_limits '' \
+  "Higher open-file limits" \
+  "65535 open files soft and 524288 hard for new logins." \
+  memory
+
 SO_LIMITS_CONF=/etc/security/limits.d/90-system-optimize.conf
 
 limits_content() {

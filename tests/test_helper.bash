@@ -34,6 +34,7 @@ setup_sandbox() {
   export STUB_STATE="$BATS_TEST_TMPDIR/stub-state"
   mkdir -p "$STUB_STATE"
   : > "$STUB_LOG"
+  hide_host_tools
   PATH_NO_STUBS="$PATH"
   export PATH="$STUBS:$PATH"
   # Nothing from the caller's environment may leak into the settings.
@@ -41,7 +42,14 @@ setup_sandbox() {
     SELF_UPDATE_REPO SELF_UPDATE_BRANCH TIMEOUT PKG_TIMEOUT DOWNLOAD_TIMEOUT ONLY SKIP \
     INSTALL_TOOLS FORCE SNAPSHOT_DIR COLOR LOGGING LOG_DIR LOG_KEEP \
     XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME SYSTEM_OPTIMIZE_ALLOW_FILE_SOURCE \
-    STUB_ACTIVE STUB_UNITS STUB_RPM_INSTALLED STUB_PKG_INSTALLED SO_INIT 2>/dev/null || true
+    STUB_ACTIVE STUB_UNITS STUB_RPM_INSTALLED STUB_PKG_INSTALLED SO_INIT \
+    ENABLE PROFILE BACKEND BENCHMARK BENCH_SECONDS BENCH_THRESHOLD SAFE_APPLY SAFE_APPLY_TIMEOUT \
+    HISTORY HISTORY_DIR HISTORY_KEEP_DAYS TUNE_STEPS ATIME JOURNAL_MAX CHARGE_LIMIT GPU_MEM_GIB \
+    FONT_HINTING FONT_SUBPIXEL PARALLEL_DOWNLOADS SO_HISTORY_BACKEND SUDO_USER \
+    SO_DESKTOP_USER SO_DESKTOP SO_SESSION_TYPE XDG_CURRENT_DESKTOP XDG_SESSION_TYPE 2>/dev/null || true
+  # ...and every other setting config.sh knows.
+  # shellcheck disable=SC2046
+  unset $(sed -n 's/^  \[\([A-Z][A-Z0-9_]*\)\]=.*/\1/p' "$REPO_ROOT/lib/core/config.sh" | sort -u) 2>/dev/null || true
   export SO_SYSTEM_CONFIG="$SANDBOX/etc/system-optimize.conf"
   export SO_SKIP_ROOT_CHECK=1
   export SO_VIRT=none SO_CONTAINER=none SO_PKG=dnf SO_KERNEL=6.17.0-test
@@ -52,7 +60,15 @@ setup_sandbox() {
     LOG_DIR_DEFAULT="$SO_HOME/.local/state/system-optimize"
   fi
   SNAP_DIR="$SANDBOX/var/lib/system-optimize/snapshots"
-  export LOG_DIR_DEFAULT SNAP_DIR
+  # Where this user's history goes (root's is the system one).
+  if [ "$(id -u)" -eq 0 ]; then
+    HIST_DIR="$SANDBOX/var/lib/system-optimize/history"
+  else
+    HIST_DIR="$SO_HOME/.local/state/system-optimize/history"
+  fi
+  export LOG_DIR_DEFAULT SNAP_DIR HIST_DIR
+  # Python's sqlite3 stands in for the sqlite3 shell where it is missing.
+  command -v sqlite3 >/dev/null 2>&1 || with_stub sqlite3
   make_machine
   if [ "$SO_TEST_TARGET" = bundle ]; then
     SO_BIN_DIR="$BATS_TEST_TMPDIR/bin"
@@ -175,6 +191,75 @@ with_stub() {
   mkdir -p "$d"
   for n in "$@"; do ln -sfn "$STUBS/optional/$n" "$d/$n"; done
   case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
+}
+
+# _shadow_path BASE NAME...: print PATH with each directory that holds a
+# NAME swapped for BASE-N, a copy made of links to everything else in it.
+_shadow_path() {
+  local base="$1" dir n new="" shadow i=0 hit names
+  shift
+  names="$*"
+  local IFS=:
+  for dir in $PATH; do
+    hit=""
+    for n in "$@"; do [ -e "$dir/$n" ] && hit=1; done
+    if [ -n "$hit" ]; then
+      i=$((i + 1))
+      shadow="$base-$i"
+      rm -rf "$shadow"; mkdir -p "$shadow"
+      for n in "$dir"/* "$dir"/.[!.]*; do
+        [ -e "$n" ] || continue
+        case " $names " in *" ${n##*/} "*) continue ;; esac
+        ln -s "$n" "$shadow/${n##*/}"
+      done
+      dir="$shadow"
+    fi
+    new="${new:+$new:}$dir"
+  done
+  printf '%s\n' "$new"
+}
+
+# hide_cmd NAME...: take NAME off PATH even where the host has it.
+hide_cmd() {
+  PATH=$(_shadow_path "$BATS_TEST_TMPDIR/hidden" "$@")
+  export PATH
+  hash -r
+}
+
+# Host tools the steps look for and the tests bring in as stubs when they
+# want them. CI runners and developer machines may have the real ones
+# (fwupdmgr, flatpak, ccache...), which would change what a step does, so
+# setup hides them. The shadow PATH is built once per run.
+HOST_TOOLS="amd-ttm btrfs flatpak fwupdmgr gsettings iw kreadconfig6 kreadconfig5
+  kscreen-doctor kwriteconfig6 kwriteconfig5 powerprofilesctl rocminfo tuned-adm
+  scx_loader scx_bpfland scx_lavd scx_flash scx_rusty scxctl emerge apk
+  xbps-install xbps-query xbps-remove rc-service rc-update sv dracut ccache
+  plocate updatedb localsearch tracker3 nmcli resolvectl profile-sync-daemon psd
+  ananicy-cpp bpftune lact amdgpu_top llama-bench pmcd psi-notify tlp
+  auto-cpufreq thermald earlyoom nohang system76-power"
+hide_host_tools() {
+  local cache="$BATS_RUN_TMPDIR/host-path" key
+  key="$PATH"
+  if [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "$key" ]; then
+    PATH=$(sed -n 2p "$cache")
+  else
+    # shellcheck disable=SC2086
+    PATH=$(_shadow_path "$BATS_RUN_TMPDIR/host" $HOST_TOOLS)
+    printf '%s\n%s\n' "$key" "$PATH" > "$cache"
+  fi
+  export PATH
+  hash -r
+}
+
+# gs_put SCHEMA KEY VALUE: a gsettings key (the gsettings stub).
+gs_put() { mkdir -p "$STUB_STATE/gsettings"; printf '%s\n' "$3" > "$STUB_STATE/gsettings/$1 $2"; }
+gs_get() { cat "$STUB_STATE/gsettings/$1 $2"; }
+
+# as_desktop [DESKTOP] [TYPE]: the current user is the desktop user of a
+# DESKTOP (default gnome) TYPE (default wayland) session.
+as_desktop() {
+  SO_DESKTOP_USER=$(id -un)
+  export SO_DESKTOP_USER SO_DESKTOP="${1:-gnome}" SO_SESSION_TYPE="${2:-wayland}"
 }
 
 # write_legacy: the three files Ed's 1.x script wrote.
@@ -351,14 +436,18 @@ load_so() {
   SO_ROOT_DIR="$REPO_ROOT"
   set +u
   local f
-  for f in log util config args sysinfo os runner runlog snapshot selfupdate status; do
+  for f in log util config steps args sysinfo os runner runlog snapshot json detect desktop history bench manage share report selfupdate; do
     # shellcheck disable=SC1090
     source "$REPO_ROOT/lib/core/$f.sh"
   done
-  for f in "$REPO_ROOT"/lib/tweaks/*.sh; do
+  # The step modules in the entry point's order (it is the run order).
+  # shellcheck disable=SC2016  # $SO_ROOT_DIR is matched literally
+  while IFS= read -r f; do
     # shellcheck disable=SC1090
-    source "$f"
-  done
+    source "$REPO_ROOT/$f"
+  done < <(sed -n 's|^source "\$SO_ROOT_DIR/\(lib/tweaks/[^"]*\.sh\)"$|\1|p' "$REPO_ROOT/bin/system-optimize")
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/lib/core/status.sh"
   # version_string lives in the entry point; a small stand-in for the tests.
   # shellcheck disable=SC2317  # called by the modules under test
   version_string() { printf 'system-optimize %s (test)\n' "$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"; }

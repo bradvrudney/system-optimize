@@ -133,8 +133,8 @@ EOF
   assert_not_called "systemctl"
   local snap
   snap=$(snapshots | tail -n1)
-  grep -q $'^svc\topenrc:earlyoom\tdisabled$' "$snap/manifest"
-  grep -q $'^pkg\tearlyoom\tinstalled$' "$snap/manifest"
+  grep -q $'^svc\topenrc:earlyoom\tdisabled\t' "$snap/manifest"
+  grep -q $'^pkg\tearlyoom\tinstalled\t' "$snap/manifest"
   : > "$STUB_LOG"
   run "$SO" --undo -y
   [ "$status" -eq 0 ]
@@ -153,7 +153,7 @@ EOF
   assert_called "xbps-install -y earlyoom"
   assert_called "xbps-install -y irqbalance"
   [ "$(readlink "$SANDBOX/var/service/earlyoom")" = /etc/sv/earlyoom ]
-  grep -q $'^svc\trunit:irqbalance\tdisabled$' "$(snapshots | tail -n1)/manifest"
+  grep -q $'^svc\trunit:irqbalance\tdisabled\t' "$(snapshots | tail -n1)/manifest"
   run "$SO" --undo -y
   [ "$status" -eq 0 ]
   [ ! -L "$SANDBOX/var/service/earlyoom" ]

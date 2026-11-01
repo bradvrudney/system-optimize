@@ -12,6 +12,11 @@
 # util-linux's `fstrim --all`. BusyBox's fstrim cannot trim everything, so
 # the util-linux one has to be installed (util-linux-misc on Alpine).
 
+step_def trim default tweak_trim '' \
+  "Weekly SSD trim" \
+  "Turns on the weekly fstrim timer (or a cron job) when there is an SSD." \
+  storage
+
 SO_TRIM_CRON_NAME=system-optimize-fstrim
 
 # trim_cron_file: the weekly cron script's path, when a weekly directory
