@@ -2,7 +2,7 @@
 Optimize your Linux system for maximum efficiency and performance
 ## Installation
 ```bash
-curl -sSL https://raw.githubusercontent.com/uberhacker/system-optimize/refs/heads/main/system-optimize | sudo tee /usr/local/bin/system-optimize && sudo chmod +x /usr/local/bin/system-optimize
+curl -sSL https://raw.githubusercontent.com/uberhacker/system-optimize/refs/heads/main/system-optimize | sudo tee /usr/local/bin/system-optimize > /dev/null && sudo chmod +x /usr/local/bin/system-optimize
 ```
 ## Usage
 ```bash
