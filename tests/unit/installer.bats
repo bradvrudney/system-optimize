@@ -21,14 +21,13 @@ setup() {
   chmod +x "$SO_INSTALL_PROGRAM"
 }
 
-# fake_tray: a copy of the checkout with a tray/ whose Makefile installs a
-# few files, like the tray app's own.
+# fake_tray: a copy of the checkout with a tray/ whose install.sh only logs
+# what it was asked, like the tray app's own installer.
 fake_tray() {
   CHECKOUT="$BATS_TEST_TMPDIR/checkout"
-  mkdir -p "$CHECKOUT"
+  mkdir -p "$CHECKOUT/tray"
   cp -a "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/docs "$REPO_ROOT"/completions \
     "$REPO_ROOT"/install.sh "$REPO_ROOT"/build.sh "$REPO_ROOT"/VERSION "$CHECKOUT"/
-  mkdir -p "$CHECKOUT/tray"
   cat > "$CHECKOUT/tray/README.md" <<'EOF'
 # system-optimize-tray
 
@@ -38,29 +37,13 @@ A tray icon and dashboard for system-optimize, with live tiles.
 |---|---|
 | GNOME 45 to 51 | GNOME has no tray. Install the **GNOME Shell extension** for a panel menu. |
 
-## Resource history
-
-The tray records what the tiles show once a minute.
-
 ## The tuning agent (optional)
 
 The agent runs a small local model once a day.
 EOF
-  cat > "$CHECKOUT/tray/install-agent.sh" <<EOF
+  cat > "$CHECKOUT/tray/install.sh" <<EOF
 #!/bin/sh
-echo "agent \$*" >> "$STUB_LOG"
-EOF
-  cat > "$CHECKOUT/tray/Makefile" <<'EOF'
-PREFIX ?= /usr
-install-tray:
-	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/system-optimize-tray
-	printf 'tray\n' > $(DESTDIR)$(PREFIX)/bin/system-optimize-tray
-install-extension:
-	install -d $(DESTDIR)$(PREFIX)/share/gnome-shell/extensions/x
-	printf '{}\n' > $(DESTDIR)$(PREFIX)/share/gnome-shell/extensions/x/metadata.json
-install-agent:
-	install -d $(DESTDIR)$(PREFIX)/share/system-optimize-tray
-	install -m 755 install-agent.sh $(DESTDIR)$(PREFIX)/share/system-optimize-tray/install-agent.sh
+echo "tray-install \$*" >> "$STUB_LOG"
 EOF
 }
 
@@ -200,25 +183,28 @@ EOF
   [ ! -e "$SO_INSTALL_MANIFEST" ]
 }
 
-@test "the tray, extension, monitoring and agent come from tray/ and are recorded for uninstall" {
+@test "the tray, extension, monitoring and agent go through tray/install.sh and are recorded for uninstall" {
   fake_tray
-  export SO_DESKTOP=gnome SO_TRAY_PREFIX=/usr
-  run bash "$CHECKOUT/install.sh" --custom tray,extension,agent --model qwen3:8b --schedule @weekly --yes --prefix "$PREFIX_DIR"
+  export SO_DESKTOP=gnome
+  run bash "$CHECKOUT/install.sh" --custom tray,extension,monitoring,agent,pcp --model qwen3:8b --schedule @weekly --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
-  [ -f "$SANDBOX/usr/bin/system-optimize-tray" ]
-  [ -f "$SANDBOX/usr/share/gnome-shell/extensions/x/metadata.json" ]
-  grep -q '^agent --model qwen3:8b --schedule @weekly --yes$' "$STUB_LOG"
-  # monitoring was not chosen: the tray is told not to record.
-  grep -qx 'RECORD_HISTORY=0' "$SO_HOME/.config/system-optimize/tray.conf"
-  grep -q "^file	/usr/bin/system-optimize-tray$" "$SO_INSTALL_MANIFEST"
+  grep -q '^tray-install --tray --extension --monitoring --agent --yes --model qwen3:8b --schedule @weekly$' "$STUB_LOG"
+  assert_output_contains "pcp: installed with the tray's monitoring part"
+  ! grep -q 'dnf install' "$STUB_LOG"
+  grep -q "^tray	$(id -un)	$CHECKOUT/tray/install.sh	--tray,--extension,--monitoring,--agent$" "$SO_INSTALL_MANIFEST"
   : > "$STUB_LOG"
   run bash "$CHECKOUT/install.sh" --uninstall --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
-  grep -q '^agent --uninstall --yes$' "$STUB_LOG"
-  [ ! -e "$SANDBOX/usr/bin/system-optimize-tray" ]
-  [ ! -e "$SANDBOX/usr/share/gnome-shell/extensions/x" ]
-  [ ! -e "$SANDBOX/usr/share/system-optimize-tray" ]
-  ! grep -q RECORD_HISTORY "$SO_HOME/.config/system-optimize/tray.conf"
+  grep -q '^tray-install --uninstall --tray --extension --monitoring --agent --yes$' "$STUB_LOG"
+  [ ! -e "$SO_INSTALL_MANIFEST" ]
+}
+
+@test "the agent alone brings the tray, and a dry run only says what it would run" {
+  fake_tray
+  run bash "$CHECKOUT/install.sh" --custom agent --dry-run --prefix "$PREFIX_DIR"
+  [ "$status" -eq 0 ]
+  assert_output_contains "would run as $(id -un): tray/install.sh --tray --agent --yes --model qwen3:4b --schedule @daily"
+  ! grep -q '^tray-install' "$STUB_LOG"
 }
 
 @test "the extension is offered on GNOME only, and the agent is left out of Full on a small machine" {

@@ -14,15 +14,15 @@
 #                 network, display, boot, gpu, helpers
 #   tray          the tray app, dashboard, root helper and polkit policy
 #   extension     the GNOME Shell extension (GNOME only)
-#   monitoring    the tray's resource history (RECORD_HISTORY)
+#   monitoring    Performance Co-Pilot for the tray's resource screens
 #   agent         the local tuning agent, its model and its schedule
 #   scx           sched_ext schedulers through scx_loader (the scheduler
 #                 step with --install-tools; a COPR on Fedora)
 #   pcp           Performance Co-Pilot, for the benchmark's metric windows
 #   bpftune       BPF network auto-tuning (shown how to get it)
 #   lact          LACT, the AMD GPU control daemon (shown how to get it)
-# The tray, extension, monitoring and agent parts come from tray/ and are
-# offered only when this checkout has it.
+# The tray, extension, monitoring and agent parts are installed by the tray
+# app's own tray/install.sh, offered only when this checkout has it.
 #
 # The manifest (one "KIND<TAB>..." line per change, in the order made):
 #   file PATH                   a file this installer copied
@@ -30,7 +30,7 @@
 #   config FILE KEY OLD         a KEY=value it set (OLD is "-" when unset)
 #   userconf USER FILE KEY OLD  the same in a user's file
 #   pkg MANAGER NAME            a package it installed
-#   agent USER SCRIPT           the agent's schedule, set up for USER
+#   tray USER SCRIPT PARTS      tray/install.sh parts installed for USER
 #   applied STEP,...            opt-in steps it applied with the program
 
 INST_CATEGORIES=(power memory storage network display boot gpu helpers)
@@ -223,7 +223,7 @@ inst_readme() {
   case "$n" in
     tray) text=$(awk 'NR > 1 && /^$/ && got { exit } NR > 1 && /^[^#|!]/ { got = 1; print }' "$readme" 2>/dev/null) ;;
     extension) text=$(grep -m1 '^| GNOME 4' "$readme" 2>/dev/null | awk -F'|' '{ print $3 }' | sed 's/\*\*//g; s/^ *//') ;;
-    monitoring) text=$(md_section "$readme" "Resource history" "$mode") ;;
+    monitoring) text="" ;;   # the fallback says what tray/install.sh --monitoring does
     agent) text=$(md_section "$readme" "The tuning agent (optional)" "$mode") ;;
     scx) text=$(md_section "$SRC/docs/tools.md" "sched_ext" "$mode") ;;
     pcp) text=$(md_section "$SRC/docs/tools.md" "Performance Co-Pilot" "$mode") ;;
@@ -239,7 +239,7 @@ inst_fallback() {
   case "$1" in
     tray) echo "A tray icon and dashboard: live CPU, memory, temperature and disk readings, a switch per step, and the benchmark against your baseline. Changes go through system-optimize behind a password prompt." ;;
     extension) echo "GNOME has no tray: this panel menu shows live readings, a switch per step, Apply all, Undo and profiles." ;;
-    monitoring) echo "The tray records CPU, memory, temperature and disk averages once a minute, so each resource page can show the effect of a setting change. Nothing leaves the computer." ;;
+    monitoring) echo "Performance Co-Pilot for the tray's resource screens: long history of CPU, memory, temperature and disk, and the AMD GPU where there is one. The tray's own minute averages need nothing installed." ;;
     agent) echo "A small local model (qwen3:4b through Ollama) looks at the status and benchmark history once a day and may suggest one change. It never applies anything itself." ;;
     scx) echo "sched_ext loads a CPU scheduler written in BPF (scx_bpfland, scx_lavd) through scx_loader. The scheduler step picks one; this installs the packages (a COPR on Fedora)." ;;
     pcp) echo "Performance Co-Pilot records system metrics. With it, --benchmark keeps a metrics window from before and after each run." ;;
@@ -253,7 +253,7 @@ inst_title() {
   case "$1" in
     tray) echo "Tray app and dashboard" ;;
     extension) echo "GNOME Shell extension" ;;
-    monitoring) echo "Resource history (monitoring)" ;;
+    monitoring) echo "Resource monitoring (Performance Co-Pilot)" ;;
     agent) echo "Local tuning agent ($INST_AGENT_MODEL)" ;;
     scx) echo "sched_ext schedulers (scx_loader)" ;;
     pcp) echo "Performance Co-Pilot" ;;
@@ -299,12 +299,10 @@ inst_full_why() {
 inst_unavailable() {
   case "$1" in
     tray|extension|monitoring|agent)
-      [ -f "$SRC/tray/Makefile" ] || { echo "this checkout has no tray directory yet; the tray app's pull request adds it"; return; }
-      [ "$MODE" != user ] || [ "$1" = monitoring ] || [ "$1" = agent ] || { echo "needs a system install (polkit), not --user"; return; } ;;
+      [ -f "$(inst_tray_script)" ] || { echo "this checkout has no tray directory yet; the tray app's pull request adds it"; return; } ;;
   esac
   case "$1" in
     extension) [ "$(inst_desktop)" = gnome ] || echo "for GNOME only (this desktop: $(inst_desktop))" ;;
-    monitoring|agent) [ -f "$SRC/tray/Makefile" ] && [ "$MODE" = user ] && echo "needs the tray, which needs a system install" ;;
   esac
   return 0
 }
@@ -546,62 +544,32 @@ inst_do_steps() {
   inst_set_config "$file" ENABLE "$merged"
 }
 
-# _stage_tray TARGET: copy what "make -C tray TARGET" installs, recording it.
-_stage_tray() {
-  local target="$1" stage f rel
-  if [ "${INST_DRY_RUN:-0}" = 1 ]; then inst_dry "install the tray's $target (make -C tray $target)"; return 0; fi
-  command -v make >/dev/null 2>&1 || die "make is needed for the tray (install it with your package manager)"
-  stage=$(mktemp -d "${TMPDIR:-/tmp}/so-tray.XXXXXX")
-  make -s -C "$SRC/tray" "$target" DESTDIR="$stage" PREFIX="${SO_TRAY_PREFIX:-/usr}" >/dev/null || die "make -C tray $target failed"
-  while IFS= read -r f; do
-    rel="${f#"$stage"}"
-    [ -n "$rel" ] || continue
-    if [ -d "$f" ]; then
-      [ -d "${SO_ROOT:-}$rel" ] && continue
-      priv "${SO_ROOT:-}$rel" mkdir -p "${SO_ROOT:-}$rel"
-      inst_record dir "$rel"
-    else
-      priv "${SO_ROOT:-}$rel" cp -p "$f" "${SO_ROOT:-}$rel"
-      inst_record file "$rel"
-    fi
-  done < <(find "$stage" -mindepth 1 | sort)
-  rm -rf "$stage"
-  inst_ok "installed the tray's $target"
-}
+# inst_tray_script: the tray app's own installer in this checkout.
+inst_tray_script() { printf '%s\n' "$SRC/tray/install.sh"; }
 
+# inst_do_tray: the tray's parts, through tray/install.sh run as the desktop
+# user (it uses sudo for the system parts; the extension, the agent's model
+# and its schedule are per user). Choosing a part is the consent, so it runs
+# with --yes; the summary showed what comes.
 inst_do_tray() {
-  local u home
-  [ -n "${INST_PICK[tray]:-}" ] && _stage_tray install-tray
-  [ -n "${INST_PICK[extension]:-}" ] && {
-    _stage_tray install-extension
-    inst_dim "  turn it on: gnome-extensions enable system-optimize@bradvrudney.github.io (then log out and in)"
-  }
-  if [ -n "${INST_PICK[tray]:-}" ]; then
-    u=$(inst_user); home=$(inst_user_home "$u")
-    if [ -n "${INST_PICK[monitoring]:-}" ]; then
-      inst_set_config "$home/.config/system-optimize/tray.conf" RECORD_HISTORY 1 "$u"
-    else
-      inst_set_config "$home/.config/system-optimize/tray.conf" RECORD_HISTORY 0 "$u"
-    fi
-  fi
-  [ -n "${INST_PICK[agent]:-}" ] && inst_do_agent
-  return 0
-}
-
-inst_do_agent() {
-  local u script args
+  local u script n parts=() args=()
+  for n in "${INST_TRAY_PARTS[@]}"; do [ -n "${INST_PICK[$n]:-}" ] && parts+=("--$n"); done
+  [ ${#parts[@]} -gt 0 ] || return 0
   u=$(inst_user)
-  _stage_tray install-agent
-  script="${SO_ROOT:-}${SO_TRAY_PREFIX:-/usr}/share/system-optimize-tray/install-agent.sh"
-  args=(--model "$INST_AGENT_MODEL" --schedule "$INST_AGENT_SCHEDULE")
-  [ "${INST_YES:-0}" = 1 ] && args+=(--yes)
-  if [ "${INST_DRY_RUN:-0}" = 1 ]; then inst_dry "set up the agent for $u: install-agent.sh ${args[*]}"; return 0; fi
-  inst_record agent "$u" "$script"
-  if inst_as_user "$u" bash "$script" "${args[@]}"; then
-    inst_ok "the agent runs $INST_AGENT_SCHEDULE with $INST_AGENT_MODEL for $u"
-  else
-    inst_warn "the agent's setup did not finish; run it again: $script ${args[*]}"
+  script=$(inst_tray_script)
+  args=("${parts[@]}" --yes)
+  [ -z "${INST_PICK[agent]:-}" ] || args+=(--model "$INST_AGENT_MODEL" --schedule "$INST_AGENT_SCHEDULE")
+  if [ "${INST_DRY_RUN:-0}" = 1 ]; then
+    inst_dry "run as $u: tray/install.sh ${args[*]}"
+    return 0
   fi
+  inst_record tray "$u" "$script" "$(IFS=,; echo "${parts[*]}")"
+  if inst_as_user "$u" bash "$script" "${args[@]}"; then
+    inst_ok "tray parts installed for $u: ${parts[*]//--/}"
+  else
+    inst_warn "the tray's installer did not finish; run it again: $script ${args[*]}"
+  fi
+  return 0
 }
 
 _pkg_installed() {
@@ -615,7 +583,9 @@ _pkg_installed() {
 
 inst_do_helpers() {
   local mgr pkg
-  if [ -n "${INST_PICK[pcp]:-}" ]; then
+  if [ -n "${INST_PICK[pcp]:-}" ] && [ -n "${INST_PICK[monitoring]:-}" ]; then
+    inst_ok "pcp: installed with the tray's monitoring part"
+  elif [ -n "${INST_PICK[pcp]:-}" ]; then
     mgr=$(inst_pkg_manager)
     case "$mgr" in dnf|apt-get) pkg=pcp-zeroconf ;; *) pkg="" ;; esac
     if [ -z "$pkg" ]; then
@@ -746,10 +716,13 @@ inst_uninstall() {
           dnf) priv "${SO_ROOT:-}/etc" dnf remove -y "$b" ;;
           apt-get) priv "${SO_ROOT:-}/etc" apt-get remove -y "$b" ;;
         esac && inst_ok "removed the package $b" ;;
-      agent)
-        if [ -f "$b" ]; then
-          if [ "${INST_DRY_RUN:-0}" = 1 ]; then inst_dry "remove the agent's schedule for $a"
-          else inst_as_user "$a" bash "$b" --uninstall --yes || inst_warn "the agent's schedule for $a was not removed"; fi
+      tray)
+        # shellcheck disable=SC2086  # the parts, one word each
+        if [ "${INST_DRY_RUN:-0}" = 1 ]; then inst_dry "run as $a: tray/install.sh --uninstall ${c//,/ } --yes"
+        elif [ -f "$b" ]; then
+          inst_as_user "$a" bash "$b" --uninstall ${c//,/ } --yes || inst_warn "the tray's parts were not all removed; run: $b --uninstall ${c//,/ }"
+        else
+          inst_warn "$b is gone, so the tray's parts stay; from a checkout run: tray/install.sh --uninstall ${c//,/ }"
         fi ;;
       file)
         if [ "${INST_DRY_RUN:-0}" = 1 ]; then inst_dry "remove $a"; continue; fi
