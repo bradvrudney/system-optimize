@@ -91,6 +91,18 @@ test('themeFromConfig', () => {
     assert.equal(themeFromConfig(null), 'system');
 });
 
+test('readout lines open resource pages', async () => {
+    const {readoutResource, RESOURCES} = await import('../system-optimize@bradvrudney.github.io/lib.js');
+    const lines = readoutLines(sample);
+    assert.equal(readoutResource(lines[0]), 'cpu');
+    assert.equal(readoutResource(lines[1]), 'memory');
+    assert.equal(readoutResource(lines[3]), null);
+    assert.equal(readoutResource(undefined), null);
+    assert.deepEqual(RESOURCES.map(r => r[0]), ['cpu', 'memory', 'cpu_temp', 'disk', 'gpu', 'gpu_mem']);
+    assert.equal(readoutResource('GPU memory 9.2 / 32.0 GB (29%)'), 'gpu_mem');
+    assert.equal(readoutResource('GPU 48°C · NVMe 41°C'), null);
+});
+
 test('gpuMemoryLine and the readout line', () => {
     const gpu = {vram_used_mb: 512, vram_total_mb: 512, gtt_used_mb: 8908, gtt_total_mb: 32256,
         mem_used_mb: 9420, mem_total_mb: 32768, mem_percent: 28.7};

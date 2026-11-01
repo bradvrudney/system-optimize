@@ -14,6 +14,7 @@ import sys
 
 from . import APP_ID, EXTENSION_UUID, VERSION
 from .cli import Cli
+from .history import METRICS
 from .monitor import Monitor, summary
 from .panel import Controller, Panel
 from .qt import QtCore, QtGui, QtWidgets
@@ -80,12 +81,21 @@ class OutputDialog(QtWidgets.QDialog):
 
 
 class App(QtCore.QObject):
-    def __init__(self, cli=None, monitor=None, interval_ms=2000, tray=True, agent_factory=None):
+    def __init__(self, cli=None, monitor=None, interval_ms=2000, tray=True, agent_factory=None, recorder=None):
         super().__init__()
         self.cli = cli or Cli()
         factory = agent_factory if agent_factory is not None else agent_factory_or_none()
         self.ctl = Controller(self.cli, monitor or Monitor(root=os.environ.get("SO_ROOT", "/")),
                               agent_factory=(lambda: factory(self.cli)) if factory else None)
+        if tray and recorder is None:
+            # the tray (not a --panel window) keeps the resource averages; on
+            # GNOME the extension's monitor does it instead
+            from .history import Recorder
+            recorder = Recorder()
+        self.ctl.recorder = recorder
+        if os.environ.get("SO_ROOT", "/") == "/":
+            from .pcp import PcpSource
+            self.ctl.pcp = PcpSource()
         self.panel = Panel(self.ctl)
         self.panel.setWindowIcon(load_icon())
         self.panel.text_requested.connect(self.show_text)
@@ -142,6 +152,8 @@ class App(QtCore.QObject):
         self.ctl.refresh()
         if page == "chat":
             self.panel.open_chat()
+        elif page and page.startswith("resource:"):
+            self.panel.open_resource(page.split(":", 1)[1])
         self.panel.show()
         self.panel.raise_()
         self.panel.activateWindow()
@@ -158,6 +170,7 @@ def main(argv=None):
     p.add_argument("--version", action="version", version="system-optimize-tray " + VERSION)
     p.add_argument("--panel", action="store_true", help="open the panel as a window, without a tray icon")
     p.add_argument("--chat", action="store_true", help="open the panel on the tuning agent's chat")
+    p.add_argument("--resource", choices=sorted(METRICS), help="open the panel on a resource's history")
     p.add_argument("--force", action="store_true",
                    help="show the tray icon even when the GNOME Shell extension is enabled")
     args = p.parse_args(argv)
@@ -166,10 +179,10 @@ def main(argv=None):
     QtWidgets.QApplication.setDesktopFileName(APP_ID)
     app = QtWidgets.QApplication(sys.argv[:1])
 
-    if args.panel or args.chat:
+    if args.panel or args.chat or args.resource:
         a = App(tray=False)
         app.setQuitOnLastWindowClosed(True)
-        a.show_panel("chat" if args.chat else None)
+        a.show_panel("chat" if args.chat else ("resource:" + args.resource) if args.resource else None)
         return app.exec()
 
     if not args.force and gnome_extension_enabled():

@@ -253,3 +253,24 @@ export function themeFromConfig(text) {
     }
     return theme;
 }
+
+// The resource pages of the dashboard, in the order of its tiles.
+export const RESOURCES = [
+    ['cpu', 'CPU load'],
+    ['memory', 'Memory'],
+    ['cpu_temp', 'CPU temperature'],
+    ['disk', 'Disk I/O'],
+    ['gpu', 'GPU busy'],
+    ['gpu_mem', 'GPU memory'],
+];
+
+// Which resource page a readout line opens, or null.
+export function readoutResource(line) {
+    if (/^CPU /.test(line ?? ''))
+        return 'cpu';
+    if (/^Memory /.test(line ?? ''))
+        return 'memory';
+    if (/^GPU memory /.test(line ?? ''))
+        return 'gpu_mem';
+    return null;
+}

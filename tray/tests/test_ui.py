@@ -208,6 +208,58 @@ class PanelTest(unittest.TestCase):
             self.assertIn(p["name"], text)
         self.assertIn("system-optimize-tray", text)
 
+    def test_resource_page_shows_averages_around_changes(self):
+        from datetime import datetime
+        from so_tray.history import History
+        h = History()
+        first = datetime.fromisoformat("2026-10-08T21:10:00-04:00").timestamp()
+        now = time.time()
+        t = first - 10 * 86400
+        while t < now:
+            h.record({"temperature": {"cpu": 70 if t < first else 60}}, ts=t)
+            t += 3600
+        h.close()
+        self.panel.tiles["cpu_temp"].clicked.emit()
+        self.assertIs(self.panel.stack.currentWidget(), self.panel.resource)
+        self.assertEqual(self.panel.res_title.text(), "CPU temperature")
+        log = self.panel.res_log
+        self.assertTrue(self.wait(lambda: log.rowCount() >= 3 and log.item(0, 2) is not None))
+        texts = [log.item(r, 2).text() for r in range(log.rowCount())]
+        self.assertTrue(any("70 °C → 60 °C" in x for x in texts), texts)
+        self.assertNotEqual(self.panel.res_stats["avg"].text(), "–")
+        self.assertTrue(self.panel.res_stats["since"].text().startswith("-"))
+        self.assertEqual(self.panel.res_stats["now"].text(), "–")        # no live sample in this test
+        self.panel.ctl.sample = FakeMonitor().sample()
+        self.panel._on_sample()
+        self.assertEqual(self.panel.res_stats["now"].text(), "50 °C")
+
+    def test_resource_page_reads_performance_co_pilot(self):
+        from so_tray.history import History
+
+        class FakePcp:
+            def load(self):
+                h = History(":memory:")
+                t = time.time() - 20 * 86400
+                while t < time.time():
+                    h.record({"cpu": {"percent": 12}}, ts=t)
+                    t += 3600
+                return h, time.time() - 20 * 86400
+        self.ctl.pcp = FakePcp()
+        self.panel.open_resource("cpu")
+        self.assertTrue(self.wait(lambda: "Performance Co-Pilot" in self.panel.res_note.text()))
+        self.assertEqual(self.panel.res_stats["avg"].text(), "12%")
+
+    def test_turning_recording_off(self):
+        from so_tray import settings
+        from so_tray.history import Recorder
+        self.ctl.recorder = Recorder(enabled=True)
+        self.panel.open_resource("memory")
+        self.panel.set_recording(False)
+        self.assertEqual(settings.load()["RECORD_HISTORY"], "0")
+        self.assertFalse(self.ctl.recorder.enabled)
+        self.panel.open_resource("nonsense")
+        self.assertEqual(self.panel.resource_name, "memory")
+
     def test_not_installed(self):
         self.ctl.info = {"found": False, "features": [], "capabilities": []}
         self.ctl.history = {"benchmarks": [], "changes": [], "available": False}
