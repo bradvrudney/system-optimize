@@ -2,7 +2,7 @@
 
 Fixes, better detection, and reports of what a run printed on a real
 machine are all welcome: open an issue or a pull request and paste the
-output of `system-optimize --status` (it has everything useful).
+output of `system-optimize status` (it has everything useful).
 
 ## Before you start
 
@@ -21,9 +21,10 @@ tests/install-smoke.sh      # install.sh end to end, then --status and --dry-run
 CI runs all of them on every push and pull request
 (`.github/workflows/ci.yml`): lint, the unit tests against both builds with
 bats-core pinned to a release commit, the single-file build as an artifact,
-and the install smoke test in Fedora, Debian, Ubuntu, Arch and openSUSE
-containers, where it also makes a real run with `--force` and checks that
-`--undo` leaves `/etc` exactly as it was.
+and the install smoke test in Ubuntu, Debian, Fedora, Rocky Linux, Arch,
+openSUSE Tumbleweed and Leap, and Alpine containers, where it also makes a
+real run with `--force` and checks that `undo` leaves `/etc` exactly as it
+was. `tests/containers.sh` runs the same containers locally with docker.
 
 Nothing in the unit tests touches the real system: every system path goes
 through `so_path` (which prefixes `SO_ROOT`), and every program that
@@ -35,9 +36,11 @@ changes something is a stub.
 bin/system-optimize           the entry point: checks, module loading, main
 system-optimize               a wrapper at 1.x's path that runs bin/system-optimize
 lib/core/*.sh                 shared modules
-lib/tweaks/<step>.sh          one module per step
+lib/tweaks/*.sh               the steps, one or more per module
+lib/install/installer.sh      the component installer behind install.sh (Full, Custom, the manifest)
 completions/system-optimize.bash
-build.sh                      inlines the modules into one file
+docs/steps.md                 one section per step (describe and the installer read it)
+build.sh                      inlines the modules and docs/steps.md into one file
 ```
 
 | Module | What it holds |
@@ -45,13 +48,23 @@ build.sh                      inlines the modules into one file
 | `log.sh` | colours, icons, `log_*`, the console descriptor `SO_OUT`, the copy of every line into the run log |
 | `util.sh` | the runners (`run`, `do_run`, `do_sudo`, `do_pipe`), `confirm`, `download` (https only), `tmp_file`, `has_cmd`, `is_root`, `list_has`, `join_by` |
 | `config.sh` | the whitelist of keys with defaults and types, the file parser, precedence, `cfg`/`cfg_bool` |
-| `args.sh` | `usage`, `args_parse`, `args_apply`, `SO_STEPS` |
-| `sysinfo.sh` | the read-only probes: OS, RAM, swap, CPUs, VM/container, battery, package manager; `so_path`, `sysctl_get`, the disk list, unit and package helpers |
-| `runner.sh` | `run_step`, `step_ok`/`step_updated`/`step_skip`/`step_dry`/`step_warn`/`step_fail`, `--only`/`--skip`, the summary |
+| `steps.sh` | the step registry (`step_def`), the categories, the profiles, which steps a run includes |
+| `args.sh` | `usage`, the command words and their option forms, `args_parse`, `args_apply` |
+| `sysinfo.sh` | the read-only probes: RAM, swap, CPUs, VM/container, battery; `so_path`, `sysctl_get`, the disk list |
+| `os.sh` | the distribution, its package manager and init system; package and service helpers |
+| `desktop.sh` | the desktop user and session, for steps that change a desktop setting |
+| `detect.sh` | the owners of settings (sched_ext, bpftune, LACT, PCP, btrfsd), the conflict warnings, the read-only hardware facts |
+| `runner.sh` | `run_step`, `step_ok`/`step_updated`/`step_skip`/`step_dry`/`step_warn`/`step_fail`, the summary |
 | `runlog.sh` | where the log goes, its header and footer, pruning |
-| `snapshot.sh` | the snapshot (`snap_record`, `snap_file`), the helpers that change things (`install_file`, `remove_file`, `write_sysfs`, `unit_set`), `--list-snapshots` and `--undo` |
-| `selfupdate.sh` | `--self-update` for a git checkout, a tree and a single file |
-| `status.sh` | `--status` |
+| `snapshot.sh` | the snapshot (`snap_record`, `snap_file`), the helpers that change things (`install_file`, `remove_file`, `write_sysfs`, `unit_set`, `svc_set`), `snapshots` and `undo` |
+| `json.sh` | JSON encoding helpers |
+| `history.sh` | the history store (SQLite or TSV) and what is recorded in it |
+| `bench.sh` | `benchmark` and `--benchmark` |
+| `manage.sh` | `step_probe` (a quiet dry run of one step), `--safe-apply`, `confirm`, `drift`, `tune` |
+| `share.sh` | `config export`, `import` and `diff` |
+| `report.sh` | `steps`, `describe`, `history` and `status --json` (formats in `docs/json.md`) |
+| `status.sh` | `status` |
+| `selfupdate.sh` | `self-update` for a git checkout, a tree and a single file |
 
 ## Rules every step follows
 
@@ -72,8 +85,9 @@ build.sh                      inlines the modules into one file
   result; a failed step does not stop the run, but the run exits 1.
 - **Raise, don't lower; ask the owner.** Never lower a limit the system
   already set higher. When a daemon owns a setting (power-profiles-daemon,
-  tuned), go through the daemon. Skip in VMs and containers whatever the
-  host owns.
+  tuned), go through the daemon; when one tunes it by itself (bpftune,
+  LACT, btrfsd), leave it alone. The rules are in `docs/tools.md`. Skip in
+  VMs and containers whatever the host owns.
 - **Every system path through `so_path`**, never a literal `/proc/...` read,
   so the tests can point everything at a sandbox. Paths in messages and in
   the manifest are the real system paths, without the prefix.
@@ -83,10 +97,52 @@ build.sh                      inlines the modules into one file
   everything, `shellcheck` clean, and a header comment that says what the
   module does and what changed from 1.x and why.
 
-A new step is a module in `lib/tweaks/`, a `run_step` line in `apply_main`
-(`bin/system-optimize`), its name in `SO_STEPS` (`args.sh`) and
-`_so_steps` (the completion), a `source` line in the entry point, a section
-in `docs/steps.md` and a test file.
+## Adding a step
+
+A step registers itself when its module is loaded:
+
+```bash
+step_def NAME KIND FUNC FLAGS TITLE SUMMARY CATEGORY
+```
+
+* `KIND` is `default` (runs unless skipped) or `opt-in` (runs only when
+  chosen). New steps are opt-in.
+* `FUNC` is the function that runs it. It reports exactly one result with
+  `step_ok`, `step_updated`, `step_skip`, `step_dry`, `step_warn` or
+  `step_fail`, and makes every change through the snapshot helpers.
+* `FLAGS` is comma separated and may be empty: `reboot` (takes full effect
+  after a reboot), `report` (only reports), `bench` (its effect shows in
+  `--benchmark`; `tune` may try it), `desktop` (changes the desktop user's
+  settings).
+* `TITLE` is a short name; `SUMMARY` one sentence for `steps` and the tray.
+* `CATEGORY` is one of `power`, `memory`, `storage`, `network`, `display`,
+  `boot`, `gpu`, `helpers`.
+
+The modules are loaded in run order, so the order of the `source` lines in
+`bin/system-optimize` (and of the `step_def` calls in a module) is the run
+order. A new step needs:
+
+1. its `step_def` and function in a module in `lib/tweaks/` (a new module
+   also gets a `source` line between the bundle markers in
+   `bin/system-optimize`);
+2. its name in `_so_steps` in `completions/system-optimize.bash`, in run
+   order (`tests/unit/completion.bats` checks it);
+3. a `## NAME` section in `docs/steps.md`, in run order, that starts with a
+   one-paragraph summary: `describe` prints the section and the installer
+   (`lib/install/installer.sh`) shows its first paragraph when it offers
+   the step, so that paragraph has to stand on its own. Then what it
+   changes, per distribution, conflicts, and what undo does;
+4. its settings, if any, in `SO_CFG_DEFAULT` and `SO_CFG_TYPE`, in
+   `config.example`, and in `SO_SHARE_KEYS` (`lib/core/share.sh`) when they
+   make sense on another machine;
+5. a place in a profile (`SO_PROFILE_STEPS` in `lib/core/steps.sh`) if it
+   belongs to one;
+6. a test file, `tests/unit/NAME.bats` or the module's (see below).
+
+When a maintained tool owns the setting, check for it in
+`lib/core/detect.sh` and leave the setting to it; add a warning to
+`so_warnings` when both could run. The installer picks up a new opt-in step
+by itself from `system-optimize steps --json`.
 
 ## The single-file build
 
@@ -94,8 +150,10 @@ in `docs/steps.md` and a test file.
 `# @@BUNDLE-MODULES-BEGIN@@` and `# @@BUNDLE-MODULES-END@@` markers with the
 modules, in order, under `# ==== lib/... ====` banners; sets
 `SO_BUNDLED=1`, records `SO_BUNDLE_VERSION` and `SO_BUNDLE_COMMIT`, and
-embeds the completion script. Nothing may read a file relative to `lib/` at
-run time: the single file has no `lib/`.
+embeds the completion script and `docs/steps.md` (as `so_steps_doc`, for
+`describe`). Nothing may read a file relative to `lib/` at run time: the
+single file has no `lib/`. `lib/install/installer.sh` is not part of the
+single file; only `install.sh` sources it.
 
 ## Writing tests
 
@@ -115,9 +173,11 @@ Tests live in `tests/unit/<name>.bats` and `load ../test_helper`. Call
   `/proc/sys`), `systemctl` (units from `STUB_UNITS`, running ones from
   `STUB_ACTIVE`, enabled state kept in `$STUB_STATE`, `STUB_FAIL_ACTION`),
   `udevadm`, `dnf`/`apt-get`/`pacman`/`zypper`, `rpm`, `modinfo`, `curl`,
-  `sudo`; `with_stub powerprofilesctl tuned-adm` adds the profile daemons.
-  Each appends `name args` to `$STUB_LOG`; `STUB_EXIT_<name>=N` makes one
-  fail.
+  `sudo`. `with_stub NAME...` adds optional stubs from
+  `tests/stubs/optional`: the profile daemons (`powerprofilesctl`,
+  `tuned-adm`), other package managers and init tools, `gsettings`,
+  `kscreen-doctor`, `amd-ttm`, `scx_bpfland`, `sqlite3` and more. Each
+  appends `name args` to `$STUB_LOG`; `STUB_EXIT_<name>=N` makes one fail.
 - Assertions: `assert_called`, `assert_not_called`, `calls`,
   `assert_output_contains`, `assert_output_not_contains`, `assert_contains`,
   `assert_equal`, `log_files`, `snapshots`, `assert_version_output`.
@@ -127,12 +187,13 @@ Tests live in `tests/unit/<name>.bats` and `load ../test_helper`. Call
 
 Cover at least the dry run (nothing in the sandbox changes, no snapshot),
 the real run (the files, the values and the manifest lines), a second run
-(nothing changes), the skip conditions, and `--undo` back to the state
-before.
+(nothing changes), the skip conditions, and `undo` back to the state
+before. `tests/unit/installer.bats` covers `install.sh` and
+`lib/install/installer.sh`.
 
 ## Pull requests
 
 - One step, fix or probe per pull request is easiest to review.
 - Say which distribution and hardware you ran it on, and paste
-  `system-optimize --status` and the `--dry-run` output.
+  `system-optimize status` and the `apply -n` output.
 - Don't bump `VERSION`; that happens when a release is tagged.

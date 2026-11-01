@@ -9,7 +9,8 @@
 # the modules it sources, in the same order. The entry point's
 # `SO_BUNDLED=0` line becomes `SO_BUNDLED=1`; the version and the git
 # commit are recorded at the top (SO_BUNDLE_VERSION, SO_BUNDLE_COMMIT) and
-# the bash completion script is embedded for `--completion bash`. The result
+# the bash completion script is embedded for `--completion bash` and
+# docs/steps.md for `describe`. The result
 # is plain bash: nothing is compiled, it needs the same bash 4.4 and
 # coreutils as the multi-file version, and it is checked with bash -n.
 set -euo pipefail
@@ -43,7 +44,7 @@ commit=unknown
 if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
   commit=$(git -C "$root" rev-parse --short HEAD)
   # Modified or untracked files under the bundled paths make it a -dirty build.
-  [ -z "$(git -C "$root" status --porcelain -- bin lib completions VERSION 2>/dev/null)" ] || commit="$commit-dirty"
+  [ -z "$(git -C "$root" status --porcelain -- bin lib/core lib/tweaks completions docs/steps.md VERSION 2>/dev/null)" ] || commit="$commit-dirty"
 fi
 
 # module FILE: a module's contents under a banner, without its shebang.
@@ -85,6 +86,12 @@ EOF
         printf "so_completion_script() {\n  cat <<'SO_COMPLETION_EOF'\n"
         cat "$root/completions/system-optimize.bash"
         printf 'SO_COMPLETION_EOF\n}\n'
+        if [ -f "$root/docs/steps.md" ]; then
+          printf '\n# ==== docs/steps.md (for describe and the tray) ====\n'
+          printf "so_steps_doc() {\n  cat <<'SO_STEPS_DOC_EOF'\n"
+          cat "$root/docs/steps.md"
+          printf 'SO_STEPS_DOC_EOF\n}\n'
+        fi
         printf '# ==== end of modules ====\n'
         continue ;;
       '# @@BUNDLE-MODULES-END@@')

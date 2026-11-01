@@ -275,7 +275,7 @@ confirm() {
 # list_has LIST ITEM: is ITEM in the comma/space separated LIST?
 list_has() {
   local list="$1" item="$2" x
-  local IFS=', '
+  local IFS=$', \t\n'
   for x in $list; do
     [ "$x" = "$item" ] && return 0
   done

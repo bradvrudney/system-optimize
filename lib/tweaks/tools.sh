@@ -30,6 +30,11 @@
 # earlyoom comes from EPEL on RHEL-family systems: when EPEL is not
 # enabled the step says so instead of failing.
 
+step_def tools default tweak_tools '' \
+  "Helpers (earlyoom, irqbalance, zram)" \
+  "Reports the helpers that run and, with --install-tools, installs the missing ones." \
+  helpers
+
 SO_ZRAM_CONF=/etc/systemd/zram-generator.conf
 SO_TOOL_RECS=()        # "id<TAB>why"
 SO_TOOL_CONFLICTS=()   # one line each
@@ -116,7 +121,7 @@ _tools_pkg_svc() {
       log_dry "would install the package $pkg ($SO_PKG_MANAGER)"
     else
       pkg_install "$pkg" || { log_error "could not install $pkg"; return 1; }
-      snap_record pkg "$pkg" installed || return 1
+      snap_record pkg "$pkg" installed installed || return 1
     fi
   fi
   [ -n "${2:-}" ] || return 0

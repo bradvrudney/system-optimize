@@ -19,6 +19,11 @@
 # battery for a laptop, wireless mice included. Virtual machines are
 # skipped. The profile before is recorded for --undo.
 
+step_def cpu default tweak_cpu 'bench' \
+  "Performance power profile on mains power" \
+  "Switches power-profiles-daemon or tuned to the performance profile on a desktop." \
+  power
+
 SO_CPU_PROFILE_PPD=performance
 SO_CPU_PROFILE_TUNED=throughput-performance
 
@@ -53,14 +58,16 @@ _cpu_via_ppd() {
     step_dry "would switch the power profile $cur -> $SO_CPU_PROFILE_PPD (powerprofilesctl)"
     return 0
   fi
-  snap_record ppd - "$cur" || return 1
+  snap_record ppd - "$cur" "$SO_CPU_PROFILE_PPD" || return 1
   run powerprofilesctl set "$SO_CPU_PROFILE_PPD" || { step_fail "powerprofilesctl set $SO_CPU_PROFILE_PPD failed"; return 1; }
   step_updated "power profile $cur -> $SO_CPU_PROFILE_PPD (powerprofilesctl)"
 }
 
 _cpu_via_tuned() {
-  local cur="$1"
-  if [ "$cur" = "$SO_CPU_PROFILE_TUNED" ]; then
+  local cur="$1" want="$SO_CPU_PROFILE_TUNED"
+  # The sysctl step's profile (the tuned back end) stays on top.
+  [[ " $cur " != *" system-optimize "* ]] || want+=" system-optimize"
+  if [ "$cur" = "$want" ]; then
     step_ok "tuned profile already $cur"
     return 0
   fi
@@ -69,12 +76,14 @@ _cpu_via_tuned() {
     return 0
   fi
   if [ "$SO_DRY_RUN" = 1 ]; then
-    step_dry "would switch the tuned profile $cur -> $SO_CPU_PROFILE_TUNED"
+    step_dry "would switch the tuned profile $cur -> $want"
+    plan_note tuned profile "$cur" "$want"
     return 0
   fi
-  snap_record tuned - "$cur" || return 1
-  run tuned-adm profile "$SO_CPU_PROFILE_TUNED" || { step_fail "tuned-adm profile $SO_CPU_PROFILE_TUNED failed"; return 1; }
-  step_updated "tuned profile $cur -> $SO_CPU_PROFILE_TUNED"
+  snap_record tuned - "$cur" "$want" || return 1
+  # shellcheck disable=SC2086  # a list of profile names
+  run tuned-adm profile $want || { step_fail "tuned-adm profile $want failed"; return 1; }
+  step_updated "tuned profile $cur -> $want"
 }
 
 _cpu_via_sysfs() {

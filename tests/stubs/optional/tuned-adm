@@ -10,8 +10,9 @@ case "${1:-}" in
     echo "- balanced                    - General non-specialized tuned profile"
     echo "- powersave                   - Optimize for low power consumption"
     echo "- throughput-performance      - Broadly applicable tuning that provides excellent performance"
+    for p in ${STUB_TUNED_EXTRA:-}; do echo "- $p"; done
     echo "Current active profile: $cur" ;;
-  profile) echo "$2" > "$f" ;;
+  profile) shift; echo "$*" > "$f" ;;
   off) echo none > "$f" ;;
 esac
 exit "${STUB_EXIT_tuned_adm:-0}"

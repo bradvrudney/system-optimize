@@ -18,6 +18,8 @@ SO_DEFAULT_REPO="https://github.com/uberhacker/system-optimize"
 #   name     a git ref name
 #   path     an absolute path (no "..", no spaces or shell metacharacters)
 #   list     comma separated step names
+#   enum:A|B one of the words A, B, ... (an empty word allows an empty value)
+#   size     a size with an optional K, M or G suffix
 declare -gA SO_CFG_DEFAULT=(
   [SELF_UPDATE_REPO]="$SO_DEFAULT_REPO"
   [SELF_UPDATE_BRANCH]=""
@@ -33,6 +35,30 @@ declare -gA SO_CFG_DEFAULT=(
   [LOGGING]="1"
   [LOG_DIR]=""
   [LOG_KEEP]="20"
+  [ENABLE]=""
+  [PROFILE]=""
+  [BACKEND]="auto"
+  [BENCHMARK]="0"
+  [BENCH_SECONDS]="5"
+  [BENCH_THRESHOLD]="3"
+  [SAFE_APPLY]="0"
+  [SAFE_APPLY_TIMEOUT]="300"
+  [HISTORY]="1"
+  [HISTORY_DIR]=""
+  [HISTORY_KEEP_DAYS]="180"
+  [TUNE_STEPS]="sysctl,io,cpu,noatime,btrfs,thp,mglru,scheduler"
+  [ATIME]="noatime"
+  [JOURNAL_MAX]="500M"
+  [CHARGE_LIMIT]="80"
+  [GPU_MEM_GIB]="0"
+  [FONT_HINTING]="slight"
+  [FONT_SUBPIXEL]="rgb"
+  [PARALLEL_DOWNLOADS]="10"
+  [SCHEDULER]="auto"
+  [MGLRU_TTL_MS]="1000"
+  [THP_MODE]="madvise"
+  [BENCH_LLM_MODEL]=""
+  [BENCH_PCP]="1"
 )
 declare -gA SO_CFG_TYPE=(
   [SELF_UPDATE_REPO]=url
@@ -49,6 +75,30 @@ declare -gA SO_CFG_TYPE=(
   [LOGGING]=bool
   [LOG_DIR]=path
   [LOG_KEEP]=int
+  [ENABLE]=list
+  [PROFILE]="enum:|dev|gaming|battery|llm"
+  [BACKEND]="enum:auto|files|tuned"
+  [BENCHMARK]=bool
+  [BENCH_SECONDS]=int
+  [BENCH_THRESHOLD]=int
+  [SAFE_APPLY]=bool
+  [SAFE_APPLY_TIMEOUT]=int
+  [HISTORY]=bool
+  [HISTORY_DIR]=path
+  [HISTORY_KEEP_DAYS]=int
+  [TUNE_STEPS]=list
+  [ATIME]="enum:noatime|lazytime"
+  [JOURNAL_MAX]=size
+  [CHARGE_LIMIT]=int
+  [GPU_MEM_GIB]=int
+  [FONT_HINTING]="enum:none|slight|medium|full"
+  [FONT_SUBPIXEL]="enum:none|rgb|bgr|vrgb|vbgr"
+  [PARALLEL_DOWNLOADS]=int
+  [SCHEDULER]="enum:auto|bpfland|lavd|flash|cosmos|rusty"
+  [MGLRU_TTL_MS]=int
+  [THP_MODE]="enum:madvise|always|never|keep"
+  [BENCH_LLM_MODEL]=path
+  [BENCH_PCP]=bool
 )
 # No older names yet: Ed's 1.x script had no configuration.
 declare -gA SO_CFG_ALIAS=()
@@ -83,6 +133,8 @@ config_valid() {
     name) [[ "$value" =~ ^[A-Za-z0-9_./-]*$ ]] && [[ "$value" != *..* ]] && [[ "$value" != -* ]] ;;
     path) [ -z "$value" ] || { [[ "$value" =~ ^/[A-Za-z0-9_.@+/-]*$ ]] && [[ "$value" != *..* ]]; } ;;
     list) [[ "$value" =~ ^[a-z0-9,-]*$ ]] ;;
+    enum:*) [[ "|${type#enum:}|" == *"|$value|"* ]] ;;
+    size) [[ "$value" =~ ^[0-9]{1,6}[KMG]?$ ]] ;;
     *) return 1 ;;
   esac
 }

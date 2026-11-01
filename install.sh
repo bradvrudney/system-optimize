@@ -13,8 +13,24 @@
 #   ./install.sh --update      download the configured branch and reinstall from it
 #                              (SELF_UPDATE_REPO and SELF_UPDATE_BRANCH from the
 #                              environment or the config files)
-#   ./install.sh --uninstall   remove the installation (add --user or --prefix DIR
-#                              as it was installed)
+#   ./install.sh --uninstall   remove the installation and everything the
+#                              installer added (add --user or --prefix DIR as it
+#                              was installed)
+#
+# Components: run from a terminal with no options, it asks Full or Custom.
+#   --full                     the program, every opt-in step, the tray, its
+#                              resource history and agent (when tray/ is here)
+#                              and Performance Co-Pilot; what needs a reboot or
+#                              a COPR is listed and left out
+#   --custom LIST              the program plus LIST: categories (power, memory,
+#                              storage, network, display, boot, gpu, helpers),
+#                              opt-in steps, tray, extension, monitoring, agent,
+#                              scx, pcp, bpftune, lact
+#   --list                     the components and what is offered here
+#   --apply                    run the chosen steps right after installing
+#   --model NAME, --schedule CRON   the agent's model and schedule
+#   -y, --yes                  don't ask; -n, --dry-run: show, change nothing
+#   --no-color                 plain output (NO_COLOR works too)
 #
 # The single file is made by build.sh from this checkout; it is plain bash,
 # nothing is compiled. An installation made as root, or into a directory only
@@ -43,10 +59,17 @@ TMP_DIR=""
 MODE=system
 ACTION=install
 LAYOUT=""
+INST_SELECT=""
+INST_LIST=""
+INST_YES=0
+INST_DRY_RUN=0
+INST_INTERACTIVE=0
+INST_APPLY=ask
+INST_COLOR=auto
 PREFIX="${PREFIX:-}"
 [ -z "$PREFIX" ] || MODE=prefix
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^# The single file/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
@@ -58,6 +81,19 @@ while [ $# -gt 0 ]; do
     --single|--single-file) LAYOUT=single ;;
     --uninstall|--remove) ACTION=uninstall ;;
     --update) ACTION=update ;;
+    --full) INST_SELECT=full ;;
+    --custom) [ -n "${2:-}" ] || die "--custom needs a list (install.sh --list shows them)"; INST_SELECT=custom; INST_LIST="$2"; shift ;;
+    --custom=*) INST_SELECT=custom; INST_LIST="${1#*=}" ;;
+    --list) ACTION=list ;;
+    --apply) INST_APPLY=1 ;;
+    --no-apply) INST_APPLY=0 ;;
+    --model) [ -n "${2:-}" ] || die "--model needs a name"; INST_AGENT_MODEL="$2"; shift ;;
+    --schedule) [ -n "${2:-}" ] || die "--schedule needs a cron expression"; INST_AGENT_SCHEDULE="$2"; shift ;;
+    -y|--yes) INST_YES=1 ;;
+    -n|--dry-run) INST_DRY_RUN=1 ;;
+    --interactive) INST_INTERACTIVE=1 ;;
+    --no-color) INST_COLOR=never ;;
+    --color=*) INST_COLOR="${1#*=}" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "install.sh: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -419,12 +455,28 @@ update() {
     prefix) args+=(--prefix "$PREFIX") ;;
   esac
   [ "$LAYOUT" = tree ] && args+=(--tree)
-  env SO_SUDO="$SO_SUDO" SO_HOME="$SO_HOME" bash "$top/install.sh" ${args[@]+"${args[@]}"}
+  env SO_SUDO="$SO_SUDO" SO_HOME="$SO_HOME" bash "$top/install.sh" ${args[@]+"${args[@]}"} </dev/null
 }
 
+# The component installer (Full, Custom, the manifest).
+# shellcheck source=lib/install/installer.sh
+. "$SRC/lib/install/installer.sh"
+
+# From a terminal with no component options: the menu.
+if [ "$ACTION" = install ] && [ -z "$INST_SELECT" ] && [ "$INST_YES" != 1 ] \
+  && { [ "$INST_INTERACTIVE" = 1 ] || { [ -t 0 ] && [ -t 1 ]; }; }; then
+  INST_INTERACTIVE=1
+  INST_SELECT=menu
+fi
+
 case "$ACTION" in
-  uninstall) uninstall ;;
+  uninstall)
+    inst_uninstall
+    if [ "$INST_DRY_RUN" = 1 ]; then inst_dry "remove $BUNDLE and its completion"; else uninstall; fi ;;
   update) update ;;
+  list) inst_list ;;
   install)
-    if [ "$LAYOUT" = tree ]; then install_tree; else install_single; fi ;;
+    if [ -n "$INST_SELECT" ] || [ "$INST_DRY_RUN" = 1 ]; then
+      inst_run
+    elif [ "$LAYOUT" = tree ]; then install_tree; else install_single; fi ;;
 esac

@@ -48,8 +48,8 @@ sched() {
   assert_called "udevadm control --reload-rules"
   local snap
   snap=$(snapshots | tail -n1)
-  grep -q $'^sysfs\t/sys/block/sda/queue/scheduler\tbfq$' "$snap/manifest"
-  grep -q $'^sysfs\t/sys/block/sdb/queue/read_ahead_kb\t128$' "$snap/manifest"
+  grep -q $'^sysfs\t/sys/block/sda/queue/scheduler\tbfq\t' "$snap/manifest"
+  grep -q $'^sysfs\t/sys/block/sdb/queue/read_ahead_kb\t128\t' "$snap/manifest"
   run "$SO" -y --only io
   [ "$status" -eq 0 ]
   assert_output_contains "3 disk(s) already tuned"
