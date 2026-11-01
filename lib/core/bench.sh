@@ -157,6 +157,12 @@ _bench_pcp_stop() {
   BENCH_PCP_PID=""
 }
 
+# _bench_words: the lines on stdin as "a", "a and b" or "a, b and c".
+_bench_words() {
+  awk '{ w[++n] = $0 } END {
+    for (i = 1; i <= n; i++) printf "%s%s", w[i], (i == n ? "" : (i == n - 1 ? " and " : ", ")); print "" }'
+}
+
 # _bench_geomean VALUES...: the geometric mean of the positive numbers.
 _bench_geomean() {
   printf '%s\n' "$@" | awk '$1 + 0 > 0 { s += log($1); n++ } END { if (n) printf "%.2f\n", exp(s / n) }'
@@ -194,7 +200,7 @@ bench_run() {
   fi
   BENCH_SCORE[overall]=""
   [ ${#vals[@]} -eq 0 ] || BENCH_SCORE[overall]=$(_bench_geomean "${vals[@]}")
-  BENCH_UNIT[overall]="geometric mean of $(for k in $BENCH_KEYS; do [ -n "${BENCH_SCORE[$k]}" ] && printf '%s ' "$k"; done | sed 's/ $//')"
+  BENCH_UNIT[overall]="geometric mean of $(for k in $BENCH_KEYS; do [ -n "${BENCH_SCORE[$k]}" ] && printf '%s\n' "$k"; done | _bench_words)"
   BENCH_SECS=$((SECONDS - started))
   BENCH_ID="$id"
   BENCH_TIME=$(iso_now)

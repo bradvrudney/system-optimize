@@ -208,7 +208,7 @@ md_section() {
   local file="$1" head="$2" mode="${3:-first}"
   [ -r "$file" ] || return 1
   awk -v h="$head" -v mode="$mode" '
-    $0 ~ /^#{2,3} / { t = $0; sub(/^#+ /, "", t)
+    $0 ~ /^###? / { t = $0; sub(/^#+ /, "", t)
       if (on) exit
       if (t == h) { on = 1; next } }
     on && mode == "first" && /^$/ && got { exit }
@@ -225,8 +225,8 @@ inst_readme() {
     extension) text=$(grep -m1 '^| GNOME 4' "$readme" 2>/dev/null | awk -F'|' '{ print $3 }' | sed 's/\*\*//g; s/^ *//') ;;
     monitoring) text="" ;;   # the fallback says what tray/install.sh --monitoring does
     agent) text=$(md_section "$readme" "The tuning agent (optional)" "$mode") ;;
-    scx) text=$(md_section "$SRC/docs/tools.md" "sched_ext" "$mode") ;;
-    pcp) text=$(md_section "$SRC/docs/tools.md" "Performance Co-Pilot" "$mode") ;;
+    scx) text=$(md_section "$SRC/docs/tools.md" "sched-ext/scx" "$mode") ;;
+    pcp) text=$(md_section "$SRC/docs/tools.md" "Performance Co-Pilot (PCP)" "$mode") ;;
     bpftune) text=$(md_section "$SRC/docs/tools.md" "bpftune" "$mode") ;;
     lact) text=$(md_section "$SRC/docs/tools.md" "LACT" "$mode") ;;
     *) text=$(md_section "$SRC/docs/steps.md" "$n" "$mode") ;;

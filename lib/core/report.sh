@@ -202,8 +202,8 @@ _hist_bench_json() {
 history_main() {
   local step="$SO_ARG_STEP" limit="${SO_ARG_LIMIT:-0}" benches changes row sep="" first="" baseline="" refs=" "
   local -a f
-  benches=$(hist_all benchmarks | sort -t $'\t' -k2,2n)
-  changes=$(hist_all changes | sort -t $'\t' -k3,3n -k1,1 -k2,2n)
+  benches=$(hist_all benchmarks | sort -s -t $'\t' -k2,2n)
+  changes=$(hist_all changes | sort -s -t $'\t' -k3,3n -k1,1 -k2,2n)
   if [ -n "$step" ]; then
     changes=$(printf '%s\n' "$changes" | awk -F '\t' -v s="$step" '$5 == s')
   fi

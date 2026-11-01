@@ -80,7 +80,9 @@ snap_begin() {
   [ -n "$SO_SNAP" ] && return 0
   [ "$SO_DRY_RUN" = 1 ] && return 1
   base=$(snap_base)
-  (umask 077; mkdir -p -- "$base") || { log_error "cannot create the snapshot directory $base"; return 1; }
+  # The parents keep the usual 0755 (the tray reads the history beside
+  # them); only the snapshot directory itself is private.
+  { mkdir -p -- "${base%/*}" && (umask 077; mkdir -p -- "$base"); } || { log_error "cannot create the snapshot directory $base"; return 1; }
   name=$(printf '%(%Y%m%d-%H%M%S)T' -1)
   dir="$base/$name"
   [ -e "$dir" ] && dir="$base/$name-$$"

@@ -67,8 +67,8 @@ so_warnings() {
     printf 'scx-ananicy\t%s\n' "The sched_ext scheduler $(scx_ops) and ananicy-cpp both run; ananicy-cpp can stall sched_ext schedulers, so stop one of them (sudo systemctl disable --now ananicy-cpp)."
   fi
   if bpftune_running; then
-    f=$(so_path /etc/sysctl.d/99-system-optimize.conf)
-    keys=$(sed -n 's/^\([a-z0-9_.-]*\) = .*/\1/p' "$f" 2>/dev/null | while read -r k; do bpftune_key "$k" && printf '%s ' "$k"; done)
+    # our sysctl.d file and our tuned profiles (the tuned back end)
+    keys=$(sysctl_our_keys 2>/dev/null | sort -u | while read -r k; do bpftune_key "$k" && printf '%s ' "$k"; done)
     if [ -n "$keys" ]; then
       printf 'bpftune-sysctl\t%s\n' "bpftune runs, but system-optimize still sets network buffer keys it would tune (${keys% }); run system-optimize --only sysctl to hand them to bpftune."
     fi
