@@ -1,271 +1,419 @@
 # Machine-readable output and history
 
 For programs that drive system-optimize: the tray app, the local tuning
-agent, scripts. Everything here is versioned: each document carries
-`"schema"` and `"version"`. Within a version, fields are only ever added;
-a field is never removed or changes meaning without the version going up.
-Consumers should ignore fields they do not know.
+agent, scripts. This page describes what `--json` prints and how the
+history is stored. The examples come from a run on the test suite's fake
+machine (with bpftune, LACT, ananicy-cpp and a sched_ext scheduler running,
+to show the warnings). Fields are only added over time; a consumer should
+ignore fields it does not know.
 
 ## `--json`
 
-`--json` works with every mode. It prints exactly one JSON document on
-stdout and nothing else; the human-readable messages still go to the run
-log (and to stderr with `--verbose`). The exit status is the same as
-without `--json`.
+`--json` (`-j`) prints exactly one JSON document on stdout and nothing
+else. The human-readable messages still go to the run log, and to stderr
+with `--verbose`. The exit status is the same as without `--json`.
 
-| Command | Document |
-| --- | --- |
-| `--status --json` | `system-optimize/status` |
-| `--list-steps --json` | `system-optimize/steps` |
-| `[--dry-run] [options] --json` (apply) | `system-optimize/run` |
-| `--undo [ID] --json` | `system-optimize/run` |
-| `--benchmark-only --json` | `system-optimize/benchmark` |
-| `--compare FILE --json` | `system-optimize/benchmark` |
-| `--tune --json` | `system-optimize/tune` |
-| `--check-drift --json` | `system-optimize/drift` |
-| `--sample --json` | `system-optimize/sample` |
-| `--history [N] --json` | `system-optimize/history` |
-| `--list-snapshots --json` | `system-optimize/snapshots` |
+| Command | Prints | Needs root |
+| --- | --- | --- |
+| `status --json` | [status](#status---json) | no |
+| `steps --json` | [steps](#steps---json) | no |
+| `describe STEP --json` | [describe](#describe-step---json) | no |
+| `history --json [--step STEP] [--limit N]` | [history](#history---json) | no |
+| `benchmark --json` | [a benchmark](#benchmarks) | no |
+| `drift --json` | [drift](#drift---json) | no (it reads the history) |
+| `apply`, `enable`, `disable`, `profile`, `undo`, `tune`, `confirm`, `rollback`, `config import` with `--json` | [run](#runs) | yes, except with `--dry-run` |
 
-Usage errors (exit 2) print `{"schema":"system-optimize/error","version":1,"error":"..."}`.
+The older option forms work the same way (`--status --json`,
+`--list-steps --json`, `--describe STEP --json`, `--history --json`,
+`--benchmark-only --json`, `--check-drift --json`).
 
-Common types:
+`snapshots`, `config export`, `config diff` and `self-update` have no JSON
+form; `--json` only silences their text. `status --json` carries the
+snapshots. A usage error (an unknown step or option) exits 2 with a message
+on stderr and no JSON.
 
-- times are RFC 3339 in UTC, `"2026-11-01T16:20:05Z"`;
-- a step `result` is one of `ok` (already in place), `updated`,
-  `skipped`, `warning`, `failed`, `dry-run` (would change);
-- a step `state` (status and list-steps) is one of `in-place`,
-  `would-change`, `not-applicable`, `not-selected`, `unknown`;
-- ids of runs and snapshots are `YYYYmmdd-HHMMSS[-N]`.
+Common values:
 
-### `system-optimize/status`
+* Times are ISO 8601 in local time with the UTC offset:
+  `"2026-11-01T17:50:27+00:00"`.
+* Snapshot ids are `YYYYmmdd-HHMMSS`, with `-PID` added when two runs
+  start in the same second. A benchmark id is the time it started plus its
+  phase: `20261101-175027-before`.
+* A step's `result` (in a run) or `state` (in status and describe, from a
+  dry run of the step) is one of `ok` (already in place), `updated`,
+  `skipped`, `dry-run` (would change), `warn` or `failed`.
+* `applied` is `true` when the step's dry run says `ok`, `false` when it
+  says `dry-run`, and `null` otherwise or for a step with the `report` flag.
+* A step's `category` is one of `power`, `memory`, `storage`, `network`,
+  `display`, `boot`, `gpu`, `helpers`. Its `flags` are any of `reboot`,
+  `report`, `bench`, `desktop` (see [steps.md](steps.md)).
+
+### `status --json`
+
+Everything `status` shows, for a program. It runs a quiet dry run of every
+step, so it takes a few seconds. Abridged (three of the 31 steps):
 
 ```json
 {
-  "schema": "system-optimize/status", "version": 1,
-  "generated_at": "2026-11-01T16:20:05Z",
-  "program": { "version": "2.1.0", "commit": "757279e", "bundled": true },
-  "system": {
-    "os": { "id": "fedora", "id_like": "", "name": "Fedora Linux 43 (Workstation Edition)", "version_id": "43" },
-    "kernel": "6.17.4-300.fc43.x86_64",
-    "package_manager": "dnf", "can_install": true,
-    "init": "systemd",
-    "cpu": { "count": 24, "vendor": "AuthenticAMD", "model": "AMD Ryzen AI 9 HX 370", "driver": "amd-pstate-epp",
-             "governor": "powersave", "energy_preference": "balance_performance" },
-    "memory": { "ram_gib": 64, "swap_kind": "zram", "swap_mib": 8192 },
-    "virtual": "none", "container": "none", "portable": true,
-    "power_profile": { "daemon": "tuned-ppd", "profile": "performance" },
-    "backend": "tuned",
-    "desktop": { "session": "gnome", "display_server": "wayland", "user": "brad" }
+  "version": "system-optimize 2.0.0 (git 8ed3a30)",
+  "capabilities": ["undo", "enable", "revert-step", "profile", "benchmark", "history",
+                   "describe", "safe-apply", "tune", "check-drift", "export"],
+  "steps": [
+    {
+      "name": "sysctl", "kind": "default", "category": "memory", "applied": false,
+      "title": "Kernel settings sized to RAM and swap",
+      "summary": "Swap, writeback, cache, network and file-watch settings for this machine, in /etc/sysctl.d or a tuned profile.",
+      "flags": ["bench"], "state": "dry-run",
+      "note": "would change 13 setting(s) and load /etc/sysctl.d/99-system-optimize.conf"
+    },
+    {
+      "name": "mglru", "kind": "opt-in", "category": "memory", "applied": true,
+      "title": "Memory reclaim protects the working set",
+      "summary": "Sets MGLRU min_ttl_ms (default 1000 ms) so the desktop keeps its working set instead of thrashing.",
+      "flags": ["bench"], "state": "ok",
+      "note": "MGLRU min_ttl_ms=1000 already set; kept in /etc/tmpfiles.d/system-optimize-mglru.conf"
+    },
+    {
+      "name": "driftwatch", "kind": "opt-in", "category": "helpers", "applied": null,
+      "title": "Weekly drift check",
+      "summary": "A weekly timer runs system-optimize --check-drift and logs which applied steps changed back.",
+      "flags": ["report"], "state": "dry-run",
+      "note": "would add a weekly drift check (system-optimize-drift.timer running /usr/local/bin/system-optimize --check-drift)"
+    }
+  ],
+  "profiles": ["dev", "gaming", "battery", "llm"],
+  "profile_steps": {
+    "dev": ["pkgmgr", "ccache", "plocate", "indexer", "noatime", "journal", "dns", "mglru"],
+    "gaming": ["scheduler", "responsive", "display", "wifi", "mglru"],
+    "battery": ["charge", "powerswitch", "wifi", "journal", "noatime"],
+    "llm": ["gpu-memory", "thp", "mglru", "rocm"]
   },
-  "steps": [ /* the same objects as system-optimize/steps */ ],
-  "profiles": [ /* the same objects as system-optimize/steps */ ],
-  "helpers": [ { "name": "systemd-oomd", "state": "running" } ],
-  "snapshots": [ /* the same objects as system-optimize/snapshots, newest first, at most 10 */ ],
-  "drift": null,
-  "last_benchmark": null,
-  "settings": { "TIMEOUT": { "value": "300", "source": "default" } }
+  "profile": null,
+  "snapshots": [
+    { "id": "20261101-175027", "summary": "3 change(s): mglru thp", "undone": false, "open": 2, "rollback_due": null }
+  ],
+  "categories": [
+    { "id": "power", "title": "Power and CPU" },
+    { "id": "memory", "title": "Memory" },
+    { "id": "storage", "title": "Storage" },
+    { "id": "network", "title": "Network" },
+    { "id": "display", "title": "Display and fonts" },
+    { "id": "boot", "title": "Boot and cleanup" },
+    { "id": "gpu", "title": "GPU and AI" },
+    { "id": "helpers", "title": "Tools" }
+  ],
+  "warnings": [
+    { "id": "scx-ananicy", "text": "The sched_ext scheduler bpfland_1.0.14 and ananicy-cpp both run; ananicy-cpp can stall sched_ext schedulers, so stop one of them (sudo systemctl disable --now ananicy-cpp)." },
+    { "id": "bpftune-sysctl", "text": "bpftune runs, but system-optimize still sets network buffer keys it would tune (net.core.rmem_max); run system-optimize --only sysctl to hand them to bpftune." },
+    { "id": "lact-amdgpu", "text": "LACT manages the AMD GPU, but /etc/udev/rules.d/90-gpu.rules also sets GPU power or clocks; remove one of them so they don't fight." }
+  ],
+  "hardware": {
+    "amd_pstate": "active",
+    "cpufreq_driver": "amd-pstate-epp",
+    "governor": "powersave",
+    "epp": "balance_performance",
+    "epp_choices": "default performance balance_performance balance_power power",
+    "boost": "1",
+    "platform_profile": "balanced",
+    "platform_profile_choices": "low-power balanced performance",
+    "sched_ext": "enabled (bpfland_1.0.14)",
+    "thp": "madvise",
+    "thp_defrag": "defer+madvise",
+    "mglru": "0x0007",
+    "mglru_min_ttl_ms": "1000",
+    "ttm_pages_limit": "8388608"
+  },
+  "helpers_running": ["bpftune", "lactd", "ananicy-cpp", "scx_loader", "sched_ext"]
 }
 ```
 
-`helpers[].state` is `running`, `installed` or `absent`. `drift` is the
-last `system-optimize/drift` document or `null`; `last_benchmark` the last
-`system-optimize/benchmark` document or `null`. `settings` lists every
-setting with its value and where it came from (`default`, `env`, `flag`
-or `FILE:LINE`).
+* `version` is the program's version string; `capabilities` lists what
+  this version can do, so a client can check before it offers an action.
+* `steps` lists every step in run order, each with its `state` and `note`
+  from a quiet dry run, and `applied` (see above).
+* `profiles` and `profile_steps` are the profiles and their steps.
+  `profile` is the profile of the newest run whose changes are not all
+  undone, or `null`.
+* `snapshots`, newest first: `open` counts the changes not undone yet,
+  `undone` is true when there are none, and `rollback_due` is the time a
+  `--safe-apply` rollback will undo the snapshot, or `null`.
+* `categories`: the step categories in display order, with their titles.
+* `warnings`: one `{id, text}` per conflict between owners of a setting
+  (see [the conflict rules](tools.md#conflict-rules)). The ids:
 
-### `system-optimize/steps`
+  | id | When |
+  | --- | --- |
+  | `scx-ananicy` | a sched_ext scheduler and ananicy-cpp both run |
+  | `bpftune-sysctl` | bpftune runs and this program's sysctl file still sets a key bpftune tunes |
+  | `lact-amdgpu` | lactd runs and a file in `/etc/udev/rules.d` or `/etc/tmpfiles.d` writes amdgpu power or clock settings |
+
+* `hardware`: read-only facts, all strings. A key the machine does not
+  have is left out. The keys: `amd_pstate` (the amd-pstate mode),
+  `cpufreq_driver`, `governor`, `epp` and `epp_choices` (the energy
+  performance preference of CPU policy 0 and its choices), `boost`,
+  `platform_profile` and `platform_profile_choices` (ACPI),
+  `sched_ext` (`enabled (NAME)`, `disabled`, ...), `thp` and `thp_defrag`
+  (the selected transparent huge page modes), `mglru` (the `lru_gen`
+  enabled mask) and `mglru_min_ttl_ms`, and `ttm_pages_limit` (in 4 KiB
+  pages).
+* `helpers_running`: the owners of settings that run now, from `bpftune`,
+  `lactd`, `pmcd`, `btrfsd`, `ananicy-cpp`, `scx_loader`, `tuned` and
+  `power-profiles-daemon`, plus `sched_ext` when a sched_ext scheduler is
+  loaded.
+
+### `steps --json`
+
+The step registry and the profiles, without looking at the machine (it
+returns at once). Steps are in run order, the order a run takes them in.
 
 ```json
 {
-  "schema": "system-optimize/steps", "version": 1,
   "steps": [
     {
-      "name": "sysctl", "group": "default", "category": "kernel",
-      "title": "Kernel settings sized to RAM and swap",
-      "selected": true, "state": "would-change",
-      "detail": "would change 14 setting(s)",
-      "needs_reboot": false, "reversible": true
+      "name": "legacy", "kind": "default", "category": "boot",
+      "title": "Remove the files of system-optimize 1.x",
+      "summary": "Backs up and removes the three files 1.x wrote; the steps after it write their replacements.",
+      "flags": []
     },
     {
-      "name": "noatime", "group": "opt-in", "category": "disk",
-      "title": "noatime on local filesystems",
-      "selected": false, "state": "not-selected", "detail": "",
-      "needs_reboot": false, "reversible": true
+      "name": "gpu-memory", "kind": "opt-in", "category": "gpu",
+      "title": "More GPU memory for AMD APUs (TTM limit)",
+      "summary": "Raises the TTM pages limit so an AMD APU can map more RAM as GPU memory (amd-ttm or modprobe.d). Needs a reboot.",
+      "flags": ["reboot", "bench"]
     }
   ],
   "profiles": [
-    { "name": "dev", "title": "Developer workstation", "steps": ["pkgmgr", "ccache", "plocate", "indexer", "noatime", "journal"], "active": false }
+    { "name": "llm", "title": "Local LLMs: more GPU-addressable memory on AMD APUs, THP for model weights, ROCm (needs a reboot)",
+      "steps": ["gpu-memory", "thp", "mglru", "rocm"] }
   ]
 }
 ```
 
-`group` is `default` (runs unless skipped) or `opt-in` (runs only when
-enabled with `--enable`, `ENABLE=`, `--only` or a profile). `state` comes
-from a dry run of each step, so it costs a few seconds; `--list-steps
---json --no-state` leaves every state `unknown` and returns at once.
+`kind` is `default` (runs unless skipped) or `opt-in` (runs only when
+chosen). The installer reads this list.
 
-### `system-optimize/run`
+### `describe STEP --json`
+
+One step: its registry entry, what a dry run of it says here, its section
+of [steps.md](steps.md) as Markdown (`doc`, without the heading), and the
+changes it would make.
 
 ```json
 {
-  "schema": "system-optimize/run", "version": 1,
-  "id": "20261101-162005", "mode": "apply",
-  "dry_run": false, "started_at": "...", "finished_at": "...", "exit_status": 0,
-  "snapshot": "20261101-162005",
-  "steps": [ { "name": "sysctl", "result": "updated", "message": "changed 14 setting(s); saved in /etc/sysctl.d/99-system-optimize.conf" } ],
-  "benchmark": { "before": { /* benchmark */ }, "after": { /* benchmark */ }, "comparison": { /* see below */ } },
-  "safe_apply": { "deadline": "...", "state": "confirmed" },
-  "log": "/var/log/system-optimize/20261101-162005-apply-4242.log"
+  "name": "thp", "kind": "opt-in", "category": "memory",
+  "title": "Transparent huge pages: madvise, deferred defrag",
+  "summary": "THP for programs that ask for it (llama.cpp, databases) with defer+madvise defrag, which avoids compaction stalls.",
+  "flags": ["bench"],
+  "applied": false,
+  "state": "dry-run",
+  "note": "would set THP enabled=madvise, defrag=defer+madvise, kept in /etc/tmpfiles.d/system-optimize-thp.conf (applies to programs started from now on)",
+  "doc": "Sets transparent huge pages to `THP_MODE` (default `madvise`) and their\ndefrag to `defer+madvise`. ...",
+  "changes": [
+    { "kind": "file", "target": "/etc/tmpfiles.d/system-optimize-thp.conf", "current": "absent", "wanted": "written" }
+  ]
 }
 ```
 
-`mode` is `apply` or `undo`. `snapshot` is `null` when nothing changed.
-`benchmark` is present with `--benchmark`; `safe_apply` with `--safe`
-(`state`: `confirmed`, `rolled-back`, `pending`, `rolled-back-regression`).
+`changes[].kind` is the kind of change as the snapshot records it (`file`,
+`sysctl`, `sysfs`, `unit`, `pkg`, ...); `current` and `wanted` are `null`
+when the step does not know them.
 
-### `system-optimize/benchmark`
+### Runs
+
+A command that changes things (or would, with `--dry-run`) prints one
+document when it ends:
 
 ```json
 {
-  "schema": "system-optimize/benchmark", "version": 1,
-  "id": "20261101-162005-before", "phase": "before",
-  "taken_at": "...", "duration_s": 41,
-  "machine": { "cpu_model": "AMD Ryzen AI 9 HX 370", "cpus": 24, "ram_gib": 64, "kernel": "6.17.4-300.fc43.x86_64", "os_id": "fedora" },
-  "tests": [
-    { "name": "cpu", "tool": "sysbench", "metric": "events_per_second", "unit": "events/s", "value": 41234.5, "higher_is_better": true },
-    { "name": "memory", "tool": "sysbench", "metric": "throughput", "unit": "MiB/s", "value": 18342.1, "higher_is_better": true },
-    { "name": "disk-randread", "tool": "fio", "metric": "iops", "unit": "IOPS", "value": 81234, "higher_is_better": true },
-    { "name": "disk-seqwrite", "tool": "fio", "metric": "bandwidth", "unit": "MiB/s", "value": 1834.2, "higher_is_better": true },
-    { "name": "latency", "tool": "builtin", "metric": "p99_wakeup", "unit": "us", "value": 85, "higher_is_better": false }
+  "mode": "apply",
+  "dry_run": false,
+  "exit_status": 0,
+  "snapshot": "20261101-175027",
+  "profile": null,
+  "steps": [
+    { "name": "mglru", "result": "updated", "note": "set MGLRU min_ttl_ms=1000, kept in /etc/tmpfiles.d/system-optimize-mglru.conf" },
+    { "name": "noatime", "result": "skipped", "note": "no /etc/fstab" }
   ],
-  "skipped": [ { "name": "disk-randread", "reason": "fio is not installed" } ],
-  "comparison": null
+  "benchmark_change_pct": 0.4,
+  "safe_apply": null,
+  "log": "/var/log/system-optimize/20261101-175027-apply-29101.log"
 }
 ```
 
-`phase` is `before`, `after` or `standalone`. `comparison` (on the `after`
-document, and from `--compare`) is:
+* `mode` is `apply` (also for `enable` and `profile`), `undo` (also for
+  `disable`), `tune`, `confirm`, `rollback` or `import`.
+* `snapshot` is `null` when nothing changed (and always in a dry run).
+* `steps` holds the steps that ran, in order, with their result and note.
+* `benchmark_change_pct` is the before/after change with `--benchmark`
+  (positive is faster), else `null`.
+* `safe_apply` is `null` without `--safe-apply`, else `pending` (the
+  rollback is scheduled), `rolled-back` (it could not be scheduled, so the
+  run was undone) or `rolled-back-regression` (the benchmark was slower,
+  so the run was undone).
+
+### Benchmarks
+
+`benchmark --json` prints one benchmark; `history --json` lists them. When
+no benchmark tool is installed, `benchmark --json` prints
+`{"error":"no benchmark tool: install sysbench (or stress-ng) and fio"}`
+and exits 1.
 
 ```json
 {
-  "against": "20261101-162005-before",
-  "tests": [ { "name": "cpu", "before": 41000.0, "after": 41234.5, "change_pct": 0.6, "verdict": "same" } ],
-  "overall_change_pct": 1.8, "verdict": "better", "threshold_pct": 3
+  "id": "20261101-175028-standalone",
+  "time": "2026-11-01T17:50:28+00:00",
+  "snapshot": null,
+  "profile": null,
+  "phase": "standalone",
+  "seconds": 17,
+  "scores": {
+    "cpu": 41234.52,
+    "memory": 18342.1,
+    "disk": 81234,
+    "overall": 39459.29,
+    "llm_pp": 812.43,
+    "llm_tg": 47.91
+  },
+  "units": {
+    "cpu": "events/s (sysbench cpu)",
+    "memory": "MiB/s (sysbench memory)",
+    "disk": "IOPS (fio 4k random read)",
+    "overall": "geometric mean of cpu, memory and disk",
+    "llm_pp": "tok/s",
+    "llm_tg": "tok/s"
+  },
+  "llm_model": "qwen3-4b-q4_k_m.gguf"
 }
 ```
 
-`change_pct` is positive when the result got better, whichever way the
-metric runs. `verdict` is `better`, `worse` or `same` (within the noise
-threshold, `BENCH_THRESHOLD`, default 3 %). `overall_change_pct` is the
-geometric mean of the per-test changes.
+* `phase` is `before` or `after` (around a run with `--benchmark`, both
+  carrying that run's `snapshot`), `standalone` (`benchmark`),
+  `tune-baseline` or `tune` (`tune`).
+* Every score is "higher is better". A test whose tool is missing has the
+  score `null`. `overall` is the geometric mean of `cpu`, `memory` and
+  `disk`.
+* The unit names the tool: `cpu` and `memory` come from sysbench, else
+  stress-ng (`bogo ops/s (stress-ng cpu)`, `bogo ops/s (stress-ng memrate)`);
+  `disk` from fio. Scores are compared only when their units match.
+* `llm_pp` (prompt processing) and `llm_tg` (generation), in tokens per
+  second, with `llm_model` (the model's file name), are present only when
+  llama-bench ran: `BENCH_LLM_MODEL` names a readable GGUF model and
+  `llama-bench` is installed. Otherwise the three keys are left out.
+* With Performance Co-Pilot running, each benchmark also leaves a metrics
+  window in the history directory as `pcp/ID.json` (pcp2json output).
 
-### `system-optimize/tune`
+### `history --json`
+
+Benchmarks and changes over time. It works as a normal user: it merges the
+system history (`/var/lib/system-optimize/history`) with the user's own
+(`~/.local/state/system-optimize/history`, where a user's own `benchmark`
+results go), and never reads the snapshots.
 
 ```json
 {
-  "schema": "system-optimize/tune", "version": 1,
-  "id": "20261101-170000", "started_at": "...", "finished_at": "...",
-  "baseline": { /* benchmark */ },
-  "trials": [
-    { "candidate": "profile:gaming", "snapshot": "20261101-170112", "benchmark": { /* benchmark */ },
-      "change_pct": 4.2, "kept": true, "reason": "4.2 % faster" },
-    { "candidate": "step:noatime", "snapshot": "20261101-170420", "benchmark": { /* benchmark */ },
-      "change_pct": -0.4, "kept": false, "reason": "no gain; rolled back" }
+  "benchmarks": [
+    { "id": "20261101-175027-before", "time": "2026-11-01T17:50:27+00:00", "snapshot": "20261101-175027",
+      "profile": null, "phase": "before", "seconds": 17,
+      "scores": { "cpu": 41234.52, "memory": 18342.1, "disk": 81234, "overall": 39459.29 },
+      "units": { "cpu": "events/s (sysbench cpu)", "memory": "MiB/s (sysbench memory)",
+                 "disk": "IOPS (fio 4k random read)", "overall": "geometric mean of cpu, memory and disk" } }
   ],
-  "kept": ["profile:gaming"]
+  "changes": [
+    {
+      "time": "2026-11-01T17:50:27+00:00",
+      "snapshot": "20261101-175027",
+      "step": "mglru",
+      "kind": "sysfs",
+      "target": "/sys/kernel/mm/lru_gen/min_ttl_ms",
+      "old": "0",
+      "new": "1000",
+      "undone": false,
+      "undone_time": null,
+      "benchmark_before": "20261101-175027-before",
+      "benchmark_after": "20261101-175027-after"
+    },
+    {
+      "time": "2026-11-01T17:50:27+00:00",
+      "snapshot": "20261101-175027",
+      "step": "thp",
+      "kind": "file",
+      "target": "/etc/tmpfiles.d/system-optimize-thp.conf",
+      "old": "absent",
+      "new": "written",
+      "undone": true,
+      "undone_time": "2026-11-01T17:50:28+00:00",
+      "benchmark_before": "20261101-175027-before",
+      "benchmark_after": "20261101-175027-after"
+    }
+  ],
+  "baseline": null
 }
 ```
 
-### `system-optimize/drift`
+* `benchmarks` are oldest first, in the format above.
+* `changes` are oldest first, one per recorded change. For a file, `old`
+  is `absent` or `present` (the history never holds a file's contents).
+  `undone_time` is when it was undone, or `null`. `benchmark_before` and
+  `benchmark_after` are the benchmarks taken with that run, if any.
+* `--step STEP` keeps only that step's changes and the benchmarks that go
+  with them; `baseline` is then the newest benchmark taken before the
+  step's first change (otherwise `null`). `--limit N` keeps the newest N
+  changes and, without `--step`, the newest N benchmarks.
+
+### `drift --json`
 
 ```json
 {
-  "schema": "system-optimize/drift", "version": 1, "checked_at": "...",
-  "baseline_snapshot": "20261101-162005",
-  "drifted": true,
-  "steps": [ { "name": "sysctl", "detail": "would change 2 setting(s)" } ]
+  "time": "2026-11-01T17:55:29+00:00",
+  "checked": 1,
+  "drifted": [
+    {
+      "step": "mglru",
+      "note": "would set MGLRU min_ttl_ms=1000, kept in /etc/tmpfiles.d/system-optimize-mglru.conf",
+      "changes": [
+        { "kind": "sysfs", "target": "/sys/kernel/mm/lru_gen/min_ttl_ms", "current": "0", "wanted": "1000" }
+      ]
+    }
+  ]
 }
 ```
 
-### `system-optimize/sample`
-
-One sample of how the machine is doing (also written to the history):
-
-```json
-{
-  "schema": "system-optimize/sample", "version": 1, "taken_at": "...",
-  "metrics": {
-    "load1": 0.42, "mem_available_mib": 51234, "swap_used_mib": 0,
-    "psi_cpu_some_avg10": 0.0, "psi_memory_some_avg10": 0.0, "psi_io_some_avg10": 0.12,
-    "cpu_temp_c": 48.0, "power_source": "ac", "power_profile": "performance"
-  }
-}
-```
-
-A metric the machine cannot report is left out.
-
-### `system-optimize/snapshots` and `system-optimize/history`
-
-```json
-{ "schema": "system-optimize/snapshots", "version": 1,
-  "snapshots": [ { "id": "20261101-162005", "created_at": "...", "entries": 23, "undone": false, "command": "system-optimize -y --enable noatime" } ] }
-```
-
-```json
-{ "schema": "system-optimize/history", "version": 1, "store": "sqlite",
-  "runs": [ { "id": "...", "mode": "apply", "started_at": "...", "exit_status": 0, "snapshot": "..." } ],
-  "benchmarks": [ /* benchmark documents, newest first */ ],
-  "samples": [ /* sample documents, newest first */ ] }
-```
+`checked` counts the applied steps it looked at (those with changes in the
+history that are not undone); `drifted` lists the ones whose dry run would
+change something again, with the changes in the format of `describe`.
 
 ## History store
 
-Every real run, benchmark, tuning trial, drift check and sample is kept in
-a small history so that results can be compared over time. `--undo` never
-touches it.
+Every real run's changes, every benchmark, each drift check and each
+`tune` trial are kept so that results can be compared over time. `undo`
+never removes history; it marks changes undone. Rows older than
+`HISTORY_KEEP_DAYS` (default 180) are pruned after each write, except
+changes not undone yet and the runs that made them. `HISTORY=0` turns
+recording off.
 
-Where: `/var/lib/system-optimize/history.db` for root,
-`${XDG_STATE_HOME:-~/.local/state}/system-optimize/history.db` otherwise
-(`HISTORY_DIR` changes the directory). Without `sqlite3` the same tables
-are tab-separated files in a `history/` directory next to it, one file per
-table, with a header line. `--history` reads either.
+Where: `HISTORY_DIR`, else `/var/lib/system-optimize/history` for root and
+`${XDG_STATE_HOME:-~/.local/state}/system-optimize/history` for a user.
+The directory is 0755 and its files 0644, unlike the 0700 snapshot
+directory: the history holds each change's kind, target and values but
+never a file's contents, so the tray and other programs can read it as a
+normal user. The pending `--safe-apply` rollbacks are listed there too
+(`pending.tsv`: id, due time, due epoch).
 
-Schema (SQLite; `PRAGMA user_version` is the schema version, 1):
+Format: SQLite (`history.db`, `PRAGMA user_version` 1) when `sqlite3` is
+installed, else one tab-separated file per table (`TABLE.tsv`, with a
+header line). A store keeps the format it was created with. Every column
+is text; `-` stands for an empty value. `epoch` columns are Unix seconds,
+`time` columns ISO 8601.
 
-```sql
-CREATE TABLE runs (
-  id TEXT PRIMARY KEY,            -- the run id (also the snapshot id when one was saved)
-  mode TEXT NOT NULL,             -- apply | undo | tune | benchmark
-  started_at TEXT NOT NULL, finished_at TEXT,
-  exit_status INTEGER, snapshot TEXT,
-  command TEXT,                   -- the command line, as in the log header
-  steps_json TEXT                 -- the "steps" array of system-optimize/run
-);
-CREATE TABLE benchmarks (
-  id TEXT NOT NULL,               -- benchmark id (run id plus -before/-after, or its own)
-  run_id TEXT, phase TEXT NOT NULL, taken_at TEXT NOT NULL,
-  test TEXT NOT NULL, tool TEXT, metric TEXT, unit TEXT,
-  value REAL NOT NULL, higher_is_better INTEGER NOT NULL,
-  PRIMARY KEY (id, test)
-);
-CREATE TABLE samples (
-  taken_at TEXT NOT NULL, metric TEXT NOT NULL, value TEXT NOT NULL,
-  PRIMARY KEY (taken_at, metric)
-);
-CREATE TABLE trials (
-  tune_id TEXT NOT NULL, candidate TEXT NOT NULL, snapshot TEXT,
-  benchmark_id TEXT, change_pct REAL, kept INTEGER NOT NULL, reason TEXT,
-  PRIMARY KEY (tune_id, candidate)
-);
-CREATE TABLE drift (
-  checked_at TEXT PRIMARY KEY, drifted INTEGER NOT NULL, steps_json TEXT
-);
-```
+| Table | Columns |
+| --- | --- |
+| `runs` | `id` (the snapshot id), `epoch`, `time`, `mode` (as in a run's JSON), `profile`, `steps`, `command`, `exit` |
+| `changes` | `snapshot`, `line` (its line in the snapshot's manifest), `epoch`, `time`, `step`, `kind`, `target`, `old`, `new`, `undone_epoch`, `undone_time` |
+| `benchmarks` | `id`, `epoch`, `time`, `snapshot`, `phase`, `profile`, `cpu`, `memory`, `disk`, `overall`, `cpu_unit`, `memory_unit`, `disk_unit`, `seconds`, `llm_pp`, `llm_tg`, `llm_model` |
+| `drift` | `epoch`, `time`, `steps` (the drifted steps, space separated) |
+| `tune` | `id`, `epoch`, `time`, `step`, `snapshot`, `before` and `after` (benchmark ids), `change` (percent), `kept` (1 or 0) |
 
-Maintenance: `--history-prune DAYS` deletes rows older than DAYS (samples
-first; default `HISTORY_KEEP_DAYS=180` is applied after every run),
-`--history-clear` empties the store after a confirmation (`--yes`).
-Readers should open the database read-only
-(`sqlite3 -readonly` or `file:...?mode=ro`); system-optimize writes with a
-busy timeout, so a reader never blocks a run for long.
+Maintenance: `history prune DAYS` deletes rows older than DAYS (with the
+same exceptions), `history clear` deletes this user's store after a
+confirmation (`--yes`). Readers should open the database read-only
+(`sqlite3 -readonly`); system-optimize writes with a busy timeout.
