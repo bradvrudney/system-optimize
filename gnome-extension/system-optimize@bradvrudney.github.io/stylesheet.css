@@ -13,3 +13,8 @@
 .so-theme-light .popup-menu-item { color: #1c1f24; }
 .so-theme-light .popup-sub-menu { background-color: #f6f7f9; }
 .so-theme-light .popup-separator-menu-item-separator { background-color: #dde1e6; }
+
+/* conflict warnings and pressure alerts: amber, after the theme rules so they win */
+.popup-menu-item.so-warning,
+.so-theme-dark .popup-menu-item.so-warning,
+.so-theme-light .popup-menu-item.so-warning { color: #c88800; }

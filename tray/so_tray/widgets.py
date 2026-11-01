@@ -194,6 +194,8 @@ class FeatureRow(Card):
     def __init__(self, name, label, summary, checked, enabled, tip, colors, parent=None):
         super().__init__(clickable=True, parent=parent)
         self.name = name
+        # keep its height when the panel is short: the panel scrolls instead
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 8, 8)
         text = QtWidgets.QVBoxLayout()

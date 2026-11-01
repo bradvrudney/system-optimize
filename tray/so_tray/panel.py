@@ -16,8 +16,10 @@ import time
 from . import VERSION
 from . import settings as settings_mod
 from .cli import CliError
-from .model import (baseline_compare, categories, category_count, change_log, feature_entries, actions_available,
-                    fmt_pct, measured_effect, readout_lines, score_series)
+from .credits import GROUPS
+from .model import (PressureAlerts, actions_available, baseline_compare, categories, category_count, change_log,
+                    feature_entries, fmt_pct, gpu_top_text, llm_line, measured_effect, readout_lines, score_series,
+                    warning_lines)
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .theme import SERIES, colors, mono, resolve, stylesheet
 from .widgets import Card, FeatureRow, ScoreBar, Switch, Tile, TimeChart
@@ -56,6 +58,7 @@ class Controller(QtCore.QObject):
     sample_changed = Signal()
     busy_changed = Signal(bool)
     message = Signal(str, bool)          # text, is_error
+    alert = Signal(str)                  # a pressure (PSI) alert to notify about
 
     def __init__(self, cli, monitor, agent_factory=None, parent=None):
         super().__init__(parent)
@@ -67,6 +70,8 @@ class Controller(QtCore.QObject):
         self.history = {"benchmarks": [], "changes": [], "available": False}
         self.sample = None
         self.busy = False
+        self.pressure = PressureAlerts()
+        self.psi_alerts = settings_mod.load().get("PSI_ALERTS", "1") == "1"
         self._bridge = Bridge()
         self._bridge.done.connect(self._done)
         self._callbacks = {}
@@ -110,7 +115,16 @@ class Controller(QtCore.QObject):
             self.sample = None
         if self.recorder and self.sample:
             self.recorder.add(self.sample)
+        fresh = self.pressure.update(self.sample)
+        # psi-notify already notifies about the same thing: don't double up
+        if self.psi_alerts and not (self.sample or {}).get("pressure_notifier"):
+            for text in fresh:
+                self.alert.emit(text)
         self.sample_changed.emit()
+
+    def warnings(self):
+        """Conflict warnings and current pressure, for the dashboard."""
+        return warning_lines(self.sample, self.info) + self.pressure.active
 
     def refresh(self):
         def both():
@@ -194,7 +208,9 @@ class Panel(QtWidgets.QWidget):
                 settings_mod.save("THEME", setting)
             except OSError:
                 pass
-        self.c.update(colors(resolve(self.settings["THEME"])))
+        mode = resolve(self.settings["THEME"])
+        self._applied_mode = mode
+        self.c.update(colors(mode))
         self.setStyleSheet(stylesheet(self.c))
         for a in self.theme_actions:
             a.setChecked(a.data() == self.settings["THEME"])
@@ -203,7 +219,10 @@ class Panel(QtWidgets.QWidget):
             w.update()
 
     def changeEvent(self, e):
-        if e.type() == QtCore.QEvent.Type.PaletteChange and self.settings["THEME"] == "system":
+        # Our own setStyleSheet also sends PaletteChange: re-apply only when the
+        # desktop really switched between light and dark, or this loops forever.
+        if (e.type() == QtCore.QEvent.Type.PaletteChange and self.settings["THEME"] == "system"
+                and resolve("system") != getattr(self, "_applied_mode", None)):
             QtCore.QTimer.singleShot(0, self.apply_theme)
         super().changeEvent(e)
 
@@ -263,6 +282,11 @@ class Panel(QtWidgets.QWidget):
         head.addWidget(about_btn)
         lay.addLayout(head)
 
+        self.warn_label = _label("", "warn", wrap=True)
+        self.warn_label.setAccessibleName("Warnings")
+        self.warn_label.hide()
+        lay.addWidget(self.warn_label)
+
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(8)
         self.tiles = {
@@ -270,11 +294,16 @@ class Panel(QtWidgets.QWidget):
             "memory": Tile("memory", "Memory", "%", SERIES[1], fixed_max=100),
             "cpu_temp": Tile("cpu_temp", "CPU temp", "°C", SERIES[4]),
             "disk": Tile("disk", "Disk I/O", "MB/s", SERIES[3]),
+            # shown once the machine reports them (amdgpu, or amdgpu_top)
+            "gpu": Tile("gpu", "GPU busy", "%", SERIES[2], fixed_max=100),
+            "gpu_mem": Tile("gpu_mem", "GPU memory", "%", SERIES[5], fixed_max=100),
         }
         for i, t in enumerate(self.tiles.values()):
             grid.addWidget(t, i // 2, i % 2)
             t.setToolTip("Averages over time and around each setting change")
             t.clicked.connect(lambda k=t.key: self.open_resource(k))
+        self.tiles["gpu"].hide()
+        self.tiles["gpu_mem"].hide()
         lay.addLayout(grid)
         self.power_label = _label("", "muted", wrap=True)
         self.power_label.setFont(mono(8))
@@ -300,6 +329,12 @@ class Panel(QtWidgets.QWidget):
         self.bench_btn.clicked.connect(self.run_benchmark)
         bottom.addWidget(self.bench_btn)
         bl.addLayout(bottom)
+        self.llm_label = _label("", "muted", wrap=True)
+        self.llm_label.setFont(mono(8))
+        self.llm_label.setToolTip("llama-bench tokens per second (prompt processing and generation), "
+                                  "first run → latest")
+        self.llm_label.hide()
+        bl.addWidget(self.llm_label)
         lay.addWidget(bench)
         self.bench_card = bench
 
@@ -367,6 +402,22 @@ class Panel(QtWidgets.QWidget):
         r, w = disk.get("read_mbs"), disk.get("write_mbs")
         total = None if r is None or w is None else r + w
         self.tiles["disk"].set(total, "%.1f", ("R %.1f W %.1f" % (r, w)) if total is not None else "")
+        gpu = s.get("gpu") or {}
+        if gpu.get("busy_percent") is not None:
+            self.tiles["gpu"].show()
+            self.tiles["gpu"].set(gpu["busy_percent"], "%.0f", gpu.get("name") and gpu["name"][:18] or "")
+        if gpu.get("mem_total_mb"):
+            t = self.tiles["gpu_mem"]
+            t.show()
+            t.set(gpu.get("mem_percent"), "%.0f", "%.1f/%.0f GB" % ((gpu.get("mem_used_mb") or 0) / 1024,
+                                                                   gpu["mem_total_mb"] / 1024))
+            tip = "VRAM %.1f / %.1f GB · GTT (shared) %.1f / %.1f GB · from %s" % (
+                (gpu.get("vram_used_mb") or 0) / 1024, (gpu.get("vram_total_mb") or 0) / 1024,
+                (gpu.get("gtt_used_mb") or 0) / 1024, (gpu.get("gtt_total_mb") or 0) / 1024,
+                gpu.get("source") or "?")
+            top = gpu_top_text(gpu)
+            t.setToolTip(tip + ("\n" + top if top else ""))
+        self._show_warnings()
         lines = readout_lines(s)
         self.power_label.setText(lines[-1] if lines else "")
         if self.resource_name and self.stack.currentWidget() is self.resource:
@@ -376,6 +427,11 @@ class Panel(QtWidgets.QWidget):
         from .history import METRICS, value
         unit = METRICS[self.resource_name][1]
         self.res_stats["now"].setText(self._fmt_value(value(self.ctl.sample, self.resource_name), unit))
+
+    def _show_warnings(self):
+        w = self.ctl.warnings()
+        self.warn_label.setVisible(bool(w))
+        self.warn_label.setText("\n".join("⚠ " + x for x in w))
 
     def _on_info(self):
         info = self.ctl.info
@@ -395,6 +451,7 @@ class Panel(QtWidgets.QWidget):
         expanded = set(filter(None, self.settings.get("EXPANDED", "").split(",")))
         for g in categories(info, self.ctl.history):
             head = Card(clickable=True)
+            head.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
             hl = QtWidgets.QHBoxLayout(head)
             hl.setContentsMargins(12, 7, 12, 7)
             is_open = g["key"] in expanded
@@ -454,6 +511,10 @@ class Panel(QtWidgets.QWidget):
             self.bench_value.setStyleSheet("")
             self.bench_note.setText("no benchmark yet" if avail["benchmark"] else "needs system-optimize with --benchmark")
         self.bench_bar.set(cmp_)
+        llm = llm_line(self.ctl.history)
+        self.llm_label.setVisible(bool(llm))
+        self.llm_label.setText(llm or "")
+        self._show_warnings()
         self._refresh_agent()
         if self.stack.currentWidget() is self.detail and self.detail_name:
             self._fill_detail(self.detail_name)
@@ -595,7 +656,10 @@ class Panel(QtWidgets.QWidget):
             change = "%s  %s → %s" % (c.get("target") or c.get("kind") or "", c.get("old") or "∅", c.get("new") or "∅")
             if c.get("undone"):
                 change += "  (undone)"
-            eff = QtWidgets.QTableWidgetItem(fmt_pct(c.get("delta_pct")))
+            eff_text = fmt_pct(c.get("delta_pct"))
+            if c.get("llm_delta_pct") is not None:
+                eff_text += "  LLM %s" % fmt_pct(c["llm_delta_pct"])
+            eff = QtWidgets.QTableWidgetItem(eff_text)
             if c.get("delta_pct") is not None:
                 eff.setForeground(QtGui.QColor(self.c["good"] if c["delta_pct"] >= 0 else self.c["bad"]))
             for col, item in enumerate((QtWidgets.QTableWidgetItem(when), QtWidgets.QTableWidgetItem(change), eff)):
@@ -968,9 +1032,6 @@ class Panel(QtWidgets.QWidget):
         self.stack.setCurrentWidget(self.about)
 
 
-GROUPS = (("origin", "Where it started"), ("integrates", "Tuning tools it uses and works alongside"),
-          ("tray", "The tray app is built with"), ("agent", "The optional tuning agent uses"),
-          ("development", "Tested with"))
 
 
 def about_html(cli_version, c):

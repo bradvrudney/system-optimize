@@ -4,15 +4,17 @@ never sourced). The GNOME Shell extension reads the same file.
   THEME=system | light | dark      default system (follows the desktop live)
   EXPANDED=memory,storage          the categories you opened (all collapsed by default)
   RECORD_HISTORY=1 | 0             keep hourly and daily resource averages (default 1)
+  PSI_ALERTS=1 | 0                 notify when pressure stall (PSI) crosses psi-notify's thresholds
 """
 
 import os
 import re
 
-DEFAULTS = {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1"}
+DEFAULTS = {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1", "PSI_ALERTS": "1"}
 VALID = {"THEME": re.compile(r"^(system|light|dark)$"),
          "EXPANDED": re.compile(r"^[a-z0-9_,-]*$"),
-         "RECORD_HISTORY": re.compile(r"^[01]$")}
+         "RECORD_HISTORY": re.compile(r"^[01]$"),
+         "PSI_ALERTS": re.compile(r"^[01]$")}
 
 
 def path():

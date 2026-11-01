@@ -1,7 +1,30 @@
 import unittest
 
 from helpers import fake_machine, write
-from so_tray.monitor import _read, Monitor, cpu_percent, parse_cpu_times, parse_diskstats, parse_meminfo, summary
+import io
+import json
+import time
+
+from so_tray.monitor import (_read, AmdgpuTop, Monitor, cpu_percent, parse_amdgpu_top, parse_cpu_times,
+                             parse_diskstats, parse_meminfo, parse_pressure, pressure_alerts, summary)
+
+# One `amdgpu_top -J` sample, shaped as its JSON mode prints it (cut down).
+AMDGPU_TOP = {
+    "period": {"duration": 5000, "unit": "ms"}, "devices_len": 1, "amdgpu_top_version": "0.11.5",
+    "devices": [{
+        "Info": {"DeviceName": "AMD Radeon 8060S"},
+        "VRAM": {"Total VRAM": {"value": 512, "unit": "MiB"}, "Total VRAM Usage": {"value": 300, "unit": "MiB"},
+                 "Total GTT": {"value": 98304, "unit": "MiB"}, "Total GTT Usage": {"value": 20480, "unit": "MiB"}},
+        "gpu_activity": {"GFX": {"value": 87, "unit": "%"}, "Memory": {"value": None, "unit": "%"}},
+        "fdinfo": {
+            "4242": {"name": "ollama", "usage": {"VRAM": {"value": 200, "unit": "MiB"},
+                                                 "GTT": {"value": 19000, "unit": "MiB"}}},
+            "1001": {"name": "gnome-shell", "usage": {"VRAM": {"value": 90, "unit": "MiB"},
+                                                      "GTT": {"value": 300, "unit": "MiB"}}},
+            "7": {"name": "idle", "usage": {"VRAM": {"value": 0, "unit": "MiB"}, "GTT": {"value": 0, "unit": "MiB"}}},
+        },
+    }],
+}
 
 
 class MonitorTest(unittest.TestCase):
@@ -79,7 +102,95 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(d["write_mbs"], 0.0)
 
     def test_gpu_busy(self):
-        self.assertEqual(self.m.gpu(), {"busy_percent": 12})
+        g = self.m.gpu()
+        self.assertEqual(g["busy_percent"], 12)
+        self.assertIsNone(g["source"])
+        self.assertIsNone(g["mem_percent"])
+
+    def test_gpu_memory_from_sysfs(self):
+        dev = "/sys/class/drm/card1/device/"
+        write(self.root, dev + "mem_info_vram_used", str(256 * 1048576))
+        write(self.root, dev + "mem_info_vram_total", str(512 * 1048576))
+        write(self.root, dev + "mem_info_gtt_used", str(1792 * 1048576))
+        write(self.root, dev + "mem_info_gtt_total", str(32256 * 1048576))
+        g = self.m.gpu()
+        self.assertEqual((g["vram_used_mb"], g["vram_total_mb"], g["gtt_used_mb"], g["gtt_total_mb"]),
+                         (256, 512, 1792, 32256))
+        self.assertEqual((g["mem_used_mb"], g["mem_total_mb"], g["mem_percent"]), (2048, 32768, 6.2))
+        self.assertEqual(g["source"], "sysfs")
+
+    def test_gpu_memory_from_amdgpu_top_wins(self):
+        class Fake:
+            def get(self):
+                return parse_amdgpu_top(AMDGPU_TOP)
+        m = Monitor(root=self.root, which=lambda _: None, amdgpu_top=Fake())
+        g = m.gpu()
+        self.assertEqual(g["source"], "amdgpu_top")
+        self.assertEqual(g["busy_percent"], 87)
+        self.assertEqual(g["gtt_used_mb"], 20480)
+        self.assertEqual(g["name"], "AMD Radeon 8060S")
+        self.assertEqual([p["name"] for p in g["top"]], ["ollama", "gnome-shell"])
+
+    def test_parse_amdgpu_top_tolerates_junk(self):
+        for junk in (None, [], {}, {"devices": []}, {"devices": ["x"]}, {"devices": [{"VRAM": "x"}]}):
+            r = parse_amdgpu_top(junk)
+            self.assertTrue(r is None or r["vram_used_mb"] is None, junk)
+
+    def test_amdgpu_top_reader(self):
+        """The background reader takes pretty-printed or one-line JSON."""
+        text = json.dumps(AMDGPU_TOP, indent=2) + "\n" + json.dumps(AMDGPU_TOP) + "\n"
+
+        class Proc:
+            stdout = io.StringIO(text)
+
+            def terminate(self):
+                pass
+        calls = []
+
+        def popen(argv, **_kw):
+            calls.append(argv)
+            return Proc()
+        a = AmdgpuTop(which=lambda n: "/usr/bin/" + n, popen=popen)
+        a.get()
+        for _ in range(100):
+            if a.latest:
+                break
+            time.sleep(0.01)
+        self.assertEqual(calls, [["amdgpu_top", "-J", "-s", "5000ms"]])
+        self.assertEqual(a.get()["gtt_total_mb"], 98304)
+        self.assertIsNone(AmdgpuTop(which=lambda _: None).get())
+
+    def test_pressure(self):
+        write(self.root, "/proc/pressure/cpu", "some avg10=62.50 avg60=20.00 avg300=5.00 total=1\n"
+                                                "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+        write(self.root, "/proc/pressure/memory", "some avg10=2.00 avg60=1.00 avg300=0.10 total=1\n"
+                                                   "full avg10=1.00 avg60=0.50 avg300=0.00 total=1\n")
+        write(self.root, "/proc/pressure/io", "some avg10=40.0 avg60=0 avg300=0 total=1\n"
+                                               "full avg10=16.0 avg60=0 avg300=0 total=1\n")
+        p = self.m.pressure()
+        self.assertEqual(p["cpu"]["some"]["avg10"], 62.5)
+        alerts = pressure_alerts(p)
+        self.assertEqual([(r, k) for r, k, _, _ in alerts], [("cpu", "some"), ("io", "full")])
+        self.assertEqual(parse_pressure("junk\nsome avg10=x"), {"some": {}})
+        self.assertEqual(pressure_alerts({}), [])
+
+    def test_scx_and_ananicy_conflict(self):
+        self.assertEqual(self.m.warnings(), [])
+        write(self.root, "/sys/kernel/sched_ext/state", "enabled\n")
+        write(self.root, "/sys/kernel/sched_ext/root/ops", "bpfland\n")
+        write(self.root, "/proc/321/comm", "ananicy-cpp\n")
+        self.assertEqual(self.m.warnings(), [])                  # cached for 30 s
+        w = self.m.warnings(every=0)
+        self.assertEqual(w[0]["id"], "scx-ananicy")
+        self.assertIn("bpfland", w[0]["text"])
+        write(self.root, "/sys/kernel/sched_ext/state", "disabled\n")
+        self.assertEqual(self.m.warnings(every=0), [])
+
+    def test_psi_notify_is_noticed(self):
+        self.assertIsNone(self.m.sample()["pressure_notifier"])
+        write(self.root, "/proc/555/comm", "psi-notify\n")
+        self.m.warnings(every=0)
+        self.assertEqual(self.m.sample()["pressure_notifier"], "psi-notify")
 
     def test_empty_machine_does_not_raise(self):
         import tempfile

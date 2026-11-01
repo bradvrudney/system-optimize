@@ -7,7 +7,7 @@ import unittest
 from helpers import FAKE_CLI, REPO, TRAY
 from so_tray import settings
 from so_tray.cli import Cli
-from so_tray.credits import load_credits
+from so_tray.credits import GROUPS, load_credits
 from so_tray.model import (actions_available, baseline_compare, categories, category_count, change_log,
                            feature_entries, fmt_pct, readout_lines, score_series)
 
@@ -75,12 +75,12 @@ class ModelTest(unittest.TestCase):
 class SettingsTest(unittest.TestCase):
     def test_round_trip_and_validation(self):
         p = os.path.join(tempfile.mkdtemp(), "x", "tray.conf")
-        self.assertEqual(settings.load(p), {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1"})
+        self.assertEqual(settings.load(p), {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1", "PSI_ALERTS": "1"})
         settings.save("THEME", "dark", p)
         settings.save("EXPANDED", "memory,storage", p)
         settings.save("THEME", "light", p)
         settings.save("RECORD_HISTORY", "0", p)
-        self.assertEqual(settings.load(p), {"THEME": "light", "EXPANDED": "memory,storage", "RECORD_HISTORY": "0"})
+        self.assertEqual(settings.load(p), {"THEME": "light", "EXPANDED": "memory,storage", "RECORD_HISTORY": "0", "PSI_ALERTS": "1"})
         with self.assertRaises(ValueError):
             settings.save("RECORD_HISTORY", "yes", p)
         with self.assertRaises(ValueError):
@@ -100,7 +100,16 @@ class CreditsTest(unittest.TestCase):
         names = [p["name"] for p in projects]
         self.assertEqual(len(names), len(set(names)))
         for p in projects:
-            self.assertIn(p["group"], ("origin", "integrates", "tray", "agent", "development"))
+            self.assertIn(p["group"], [g for g, _ in GROUPS])
+
+    def test_survey_projects_are_credited_with_licences(self):
+        by = {p["name"]: p for p in load_credits()}
+        for name, lic in (("amd-debug-tools", "MIT"), ("amdgpu_top", "MIT"), ("LACT", "MIT"),
+                          ("sched-ext/scx", "GPL-2.0"), ("scx-loader", "GPL-2.0"), ("psi-notify", "MIT"),
+                          ("bpftune", "GPL-2.0 WITH Linux-syscall-note"), ("btrfsd", "LGPL-2.1"),
+                          ("Performance Co-Pilot", "GPL-2.0-or-later AND LGPL-2.1-or-later AND CC-BY-3.0")):
+            self.assertEqual(by[name]["license"], lic)
+        self.assertIn("llama-bench", by["llama.cpp"]["aliases"])
 
     def test_docs_tools_md_projects_are_credited(self):
         """Every project docs/tools.md describes as used, recommended or

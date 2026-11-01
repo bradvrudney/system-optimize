@@ -49,6 +49,9 @@ export function readoutLines(sample) {
             m += ` · ${mem.zram ? 'zram' : 'swap'} ${gb(mem.swap_used_mb ?? 0)} GB used`;
         lines.push(m);
     }
+    const gpuMem = gpuMemoryLine(sample.gpu);
+    if (gpuMem)
+        lines.push(gpuMem);
     const other = [];
     if (temp.gpu !== null && temp.gpu !== undefined)
         other.push(`GPU ${round(temp.gpu)}°C`);
@@ -66,6 +69,87 @@ export function readoutLines(sample) {
         p += power.ac ? ' · on AC' : ' · on battery';
     lines.push(p);
     return lines;
+}
+
+// "GPU memory 9.2 / 32.0 GB (29%) · VRAM 0.5 · GTT 8.7" or null. VRAM is the
+// carve-out, GTT the system RAM the GPU has mapped (amdgpu_top or sysfs).
+export function gpuMemoryLine(gpu) {
+    if (!gpu?.mem_total_mb)
+        return null;
+    let line = `GPU memory ${gb(gpu.mem_used_mb ?? 0)} / ${gb(gpu.mem_total_mb)} GB`;
+    if (gpu.mem_percent !== null && gpu.mem_percent !== undefined)
+        line += ` (${round(gpu.mem_percent)}%)`;
+    const parts = [line];
+    if (gpu.vram_total_mb)
+        parts.push(`VRAM ${gb(gpu.vram_used_mb ?? 0)}`);
+    if (gpu.gtt_total_mb)
+        parts.push(`GTT ${gb(gpu.gtt_used_mb ?? 0)}`);
+    return parts.join(' · ');
+}
+
+// Pressure stall (PSI) alerts with psi-notify's thresholds. Mirrors
+// so_tray.model.PressureAlerts: one alert per resource as it crosses its
+// threshold, then quiet until it drops below 80% of it and 5 minutes pass.
+export const PSI_THRESHOLDS = {cpu: ['some', 50], memory: ['some', 10], io: ['full', 15]};
+const PRESSURE_TEXT = {
+    cpu: v => `CPU pressure: tasks waited for a CPU ${v}% of the last 10 s`,
+    memory: v => `Memory pressure: tasks stalled waiting for memory ${v}% of the last 10 s`,
+    io: v => `Disk pressure: every task stalled on disk I/O ${v}% of the last 10 s`,
+};
+
+export class PressureAlerts {
+    constructor(clock = () => Date.now() / 1000, thresholds = PSI_THRESHOLDS) {
+        this.clock = clock;
+        this.thresholds = thresholds;
+        this.cooldown = 300;
+        this.armed = {};
+        this.last = {};
+        this.active = [];
+        for (const r of Object.keys(thresholds))
+            this.armed[r] = true;
+    }
+
+    // New alerts to notify about.
+    update(sample) {
+        const pressure = sample?.pressure ?? {};
+        const now = this.clock();
+        const fresh = [], active = [];
+        for (const [res, [kind, limit]] of Object.entries(this.thresholds)) {
+            const v = pressure[res]?.[kind]?.avg10;
+            if (typeof v !== 'number')
+                continue;
+            if (v >= limit) {
+                const text = `${PRESSURE_TEXT[res](round(v))} (alert at ${round(limit)}%).`;
+                active.push(text);
+                const last = this.last[res];
+                if (this.armed[res] && (last === undefined || now - last >= this.cooldown)) {
+                    fresh.push(text);
+                    this.armed[res] = false;
+                    this.last[res] = now;
+                }
+            } else if (v < limit * 0.8) {
+                this.armed[res] = true;
+            }
+        }
+        this.active = active;
+        return fresh;
+    }
+}
+
+// Conflict warnings from the readout and from system-optimize's status,
+// without duplicates. Mirrors so_tray.model.warning_lines.
+export function warningLines(sample, info) {
+    const seen = new Set(), out = [];
+    for (const w of [...(sample?.warnings ?? []), ...(info?.warnings ?? [])]) {
+        if (!w || typeof w !== 'object' || typeof w.text !== 'string')
+            continue;
+        const key = w.id ?? w.text;
+        if (seen.has(key))
+            continue;
+        seen.add(key);
+        out.push(w.text);
+    }
+    return out;
 }
 
 // [{name, label, checked, enabled, tip}] for the switches.
@@ -139,6 +223,20 @@ export function categoryCount(g) {
     if (g.unknown)
         return `${g.total} step${g.total === 1 ? '' : 's'}`;
     return `${g.on}/${g.total} on`;
+}
+
+// One KEY's value from the tray's KEY=value config text, or fallback.
+export function configValue(text, key, fallback) {
+    let value = fallback;
+    for (const raw of (text ?? '').split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#') || !line.includes('='))
+            continue;
+        const [k, ...rest] = line.split('=');
+        if (k.trim() === key)
+            value = rest.join('=').trim().replace(/^["']|["']$/g, '');
+    }
+    return value;
 }
 
 // THEME from the tray's KEY=value config text: 'system' | 'light' | 'dark'.

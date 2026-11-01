@@ -17,24 +17,28 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {actionsAvailable, categories, categoryCount, panelLabel, parseJsonLine,
-    readoutLines, readoutResource, resultMessage, RESOURCES, themeFromConfig} from './lib.js';
+import {PressureAlerts, actionsAvailable, categories, categoryCount, configValue, panelLabel, parseJsonLine,
+    readoutLines, readoutResource, resultMessage, RESOURCES, themeFromConfig, warningLines} from './lib.js';
 
 const BACKEND = 'system-optimize-tray-backend';
 const AGENT = 'system-optimize-agent';
-const READOUT_ROWS = 4;
+const READOUT_ROWS = 5;
 const RESTART_SECONDS = 10;
 const THEME_CLASSES = ['so-theme-light', 'so-theme-dark'];
 
-// THEME from ~/.config/system-optimize/tray.conf (shared with the Qt app).
-function readTheme() {
+// ~/.config/system-optimize/tray.conf (shared with the Qt app), as text.
+function readConfig() {
     try {
         const path = GLib.build_filenamev([GLib.get_user_config_dir(), 'system-optimize', 'tray.conf']);
         const [ok, bytes] = GLib.file_get_contents(path);
-        return ok ? themeFromConfig(new TextDecoder().decode(bytes)) : 'system';
+        return ok ? new TextDecoder().decode(bytes) : '';
     } catch {
-        return 'system';
+        return '';
     }
+}
+
+function readTheme() {
+    return themeFromConfig(readConfig());
 }
 
 function applyTheme(actor, theme) {
@@ -91,6 +95,8 @@ class Indicator extends PanelMenu.Button {
         this._ext = ext;
         this._cancellable = new Gio.Cancellable();
         this._info = {found: false, features: [], capabilities: []};
+        this._sample = null;
+        this._pressure = new PressureAlerts();
         this._busy = false;
         this._monitor = null;
         this._restartId = 0;
@@ -120,6 +126,9 @@ class Indicator extends PanelMenu.Button {
         for (const [key, title] of RESOURCES)
             history.menu.addAction(title, () => this._openPanel(['--resource', key]));
         this.menu.addMenuItem(history);
+        // conflict warnings and pressure (PSI) alerts, only while there are any
+        this._warnSection = new PopupMenu.PopupMenuSection();
+        this.menu.addMenuItem(this._warnSection);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._featureSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._featureSection);
@@ -200,6 +209,29 @@ class Indicator extends PanelMenu.Button {
             item._resource = readoutResource(lines[i]);
             item.reactive = Boolean(item._resource);
         });
+        this._sample = sample;
+        const fresh = this._pressure.update(sample);
+        // psi-notify does the same notifications when it runs: don't double up
+        if (fresh.length && !sample?.pressure_notifier && configValue(readConfig(), 'PSI_ALERTS', '1') !== '0') {
+            for (const text of fresh)
+                Main.notify('system-optimize', text);
+        }
+        this._showWarnings();
+    }
+
+    _showWarnings() {
+        const lines = [...warningLines(this._sample, this._info), ...this._pressure.active];
+        const key = lines.join('\n');
+        if (key === this._warnKey)
+            return;
+        this._warnKey = key;
+        this._warnSection.removeAll();
+        for (const text of lines) {
+            const item = new PopupMenu.PopupMenuItem(`⚠ ${text}`, {reactive: false});
+            item.label.clutter_text.line_wrap = true;
+            item.add_style_class_name('so-warning');
+            this._warnSection.addMenuItem(item);
+        }
     }
 
     // -- features -----------------------------------------------------
@@ -211,6 +243,7 @@ class Indicator extends PanelMenu.Button {
             if (info)
                 this._info = info;
             this._rebuild();
+            this._showWarnings();
         });
         if (this._agent) {
             runAsync([this._agent, 'proposal', '--json'], this._cancellable, (out, code) => {

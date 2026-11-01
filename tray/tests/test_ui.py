@@ -16,14 +16,23 @@ except ImportError:  # no Qt binding here
 
 
 class FakeMonitor:
+    def __init__(self, **extra):
+        self.extra = extra
+
     def cpu(self):
         return {}
 
     def sample(self):
-        return {"time": 0, "cpu": {"percent": 20, "mhz": 3000, "load1": 1.0},
-                "memory": {"percent": 30, "total_mb": 1000, "used_mb": 300, "swap_total_mb": 0, "swap_used_mb": 0},
-                "temperature": {"cpu": 50}, "power": {"profile": "balanced", "ac": True, "batteries": []},
-                "disk": {"read_mbs": 1, "write_mbs": 2}, "gpu": {}}
+        return dict({"time": 0, "cpu": {"percent": 20, "mhz": 3000, "load1": 1.0},
+                     "memory": {"percent": 30, "total_mb": 1000, "used_mb": 300, "swap_total_mb": 0,
+                                "swap_used_mb": 0},
+                     "temperature": {"cpu": 50}, "power": {"profile": "balanced", "ac": True, "batteries": []},
+                     "disk": {"read_mbs": 1, "write_mbs": 2}, "gpu": {}}, **self.extra)
+
+
+GPU = {"busy_percent": 40, "vram_used_mb": 512, "vram_total_mb": 512, "gtt_used_mb": 8192, "gtt_total_mb": 32256,
+       "mem_used_mb": 8704, "mem_total_mb": 32768, "mem_percent": 26.6, "source": "amdgpu_top", "name": "Radeon 8060S",
+       "top": [{"pid": "77", "name": "llama-server", "vram_mb": 400, "gtt_mb": 8000}]}
 
 
 @unittest.skipIf(QtWidgets is None, "no Qt binding (PySide6 or PyQt6)")
@@ -91,6 +100,73 @@ class PanelTest(unittest.TestCase):
         self.assertTrue(any("→" in t for t in texts), texts)
         self.panel.show_dashboard()
         self.assertIs(self.panel.stack.currentWidget(), self.panel.dash)
+
+    def test_gpu_tiles_appear_only_with_gpu_data(self):
+        self.ctl.tick()
+        self.app.processEvents()
+        self.assertTrue(self.panel.tiles["gpu"].isHidden())
+        self.assertTrue(self.panel.tiles["gpu_mem"].isHidden())
+        self.ctl.monitor = FakeMonitor(gpu=GPU)
+        self.ctl.tick()
+        self.app.processEvents()
+        tile = self.panel.tiles["gpu_mem"]
+        self.assertFalse(tile.isHidden())
+        self.assertEqual(tile.value.text(), "27")
+        self.assertEqual(tile.sub.text(), "8.5/32 GB")
+        self.assertIn("GTT (shared) 8.0 / 31.5 GB", tile.toolTip())
+        self.assertIn("llama-server (77)", tile.toolTip())
+        self.assertEqual(self.panel.tiles["gpu"].value.text(), "40")
+
+    def test_warnings_banner_and_pressure_alert(self):
+        alerts = []
+        self.ctl.alert.connect(alerts.append)
+        self.ctl.psi_alerts = True
+        self.ctl.monitor = FakeMonitor(
+            warnings=[{"id": "scx-ananicy", "text": "scx_lavd and ananicy-cpp are both running."}],
+            pressure={"memory": {"some": {"avg10": 25.0}}})
+        self.ctl.tick()
+        self.app.processEvents()
+        self.assertFalse(self.panel.warn_label.isHidden())
+        text = self.panel.warn_label.text()
+        self.assertIn("scx_lavd and ananicy-cpp", text)
+        self.assertIn("Memory pressure", text)
+        self.assertEqual(len(alerts), 1)
+        self.ctl.tick()
+        self.assertEqual(len(alerts), 1, "one notification per episode")
+        self.ctl.monitor = FakeMonitor()
+        self.ctl.tick()
+        self.app.processEvents()
+        self.assertTrue(self.panel.warn_label.isHidden())
+
+    def test_psi_notify_running_means_no_tray_notification(self):
+        alerts = []
+        self.ctl.alert.connect(alerts.append)
+        self.ctl.psi_alerts = True
+        self.ctl.monitor = FakeMonitor(pressure={"cpu": {"some": {"avg10": 80.0}}}, pressure_notifier="psi-notify")
+        self.ctl.tick()
+        self.app.processEvents()
+        self.assertEqual(alerts, [])
+        self.assertIn("CPU pressure", self.panel.warn_label.text())
+
+    def test_llama_bench_line_on_benchmark_card(self):
+        self.panel._on_info()
+        self.assertFalse(self.panel.llm_label.isHidden())
+        self.assertIn("qwen3:4b", self.panel.llm_label.text())
+        self.assertIn("generation 39.5 t/s", self.panel.llm_label.text())
+        self.panel.open_feature("caching")
+        self.assertTrue(self.wait(lambda: self.panel.detail_log.rowCount() > 0
+                                  and self.panel.detail_log.item(0, 2) is not None))
+        self.assertIn("LLM +1.3%", self.panel.detail_log.item(0, 2).text())
+
+    def test_system_theme_does_not_restyle_in_a_loop(self):
+        """setStyleSheet sends PaletteChange; that must not re-apply the theme
+        again and again (it once kept the panel busy restyling)."""
+        calls = []
+        real = self.panel.apply_theme
+        self.panel.apply_theme = lambda *a: (calls.append(1), real(*a))
+        self.panel.apply_theme("system")
+        self.wait(lambda: False, timeout=0.5)
+        self.assertLessEqual(len(calls), 2, len(calls))
 
     def test_theme_switches_live_and_is_saved(self):
         from so_tray import settings
