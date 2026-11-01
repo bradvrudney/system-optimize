@@ -21,6 +21,9 @@ _so_steps="legacy sysctl mglru thp io noatime btrfs plocate indexer psd cpu
   scheduler responsive charge powerswitch limits trim journal flatpak waitonline
   firmware dns wifi fonts display pkgmgr ccache gpu-memory rocm tools driftwatch"
 _so_profiles="dev gaming battery llm"
+_so_commands="apply status steps describe enable disable profile undo snapshots
+  benchmark tune drift confirm rollback history config self-update completion
+  version help"
 
 _system_optimize() {
   local cur prev pfx="" base list
@@ -39,7 +42,32 @@ _system_optimize() {
     cur="${cur#*=}"
   fi
 
+  # The command word and its arguments.
+  if [ -z "$pfx" ] && [ "$COMP_CWORD" -eq 1 ] && [[ "$cur" != -* ]]; then
+    COMPREPLY=($(compgen -W "$_so_commands" -- "$cur"))
+    return 0
+  fi
+  if [ -z "$pfx" ] && [ "$COMP_CWORD" -ge 2 ] && [[ "$cur" != -* ]] && [[ "$prev" != -* ]] && [ "$prev" != = ]; then
+    case "${COMP_WORDS[1]}" in
+      apply|describe|enable|disable|tune)
+        COMPREPLY=($(compgen -W "$_so_steps" -- "$cur")); return 0 ;;
+      profile)
+        [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "$_so_profiles" -- "$cur")); return 0 ;;
+      history)
+        [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "prune clear" -- "$cur")); return 0 ;;
+      config)
+        if [ "$COMP_CWORD" -eq 2 ]; then COMPREPLY=($(compgen -W "export import diff" -- "$cur"))
+        else compopt -o filenames 2>/dev/null || true; COMPREPLY=($(compgen -f -- "$cur"))
+        fi
+        return 0 ;;
+      completion)
+        [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=($(compgen -W "bash zsh" -- "$cur")); return 0 ;;
+    esac
+  fi
+
   case "$prev" in
+    -p) COMPREPLY=($(compgen -W "$_so_profiles" -- "$cur")); return 0 ;;
+    -o|-x|-e) COMPREPLY=($(compgen -W "$_so_steps" -- "$cur")); return 0 ;;
     --color|--colour)
       COMPREPLY=($(compgen -P "$pfx" -W "auto always never" -- "$cur"))
       return 0 ;;

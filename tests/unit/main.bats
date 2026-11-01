@@ -11,7 +11,7 @@ version() { tr -d '[:space:]' < "$REPO_ROOT/VERSION"; }
 @test "--help, --version and usage errors" {
   run "$SO" --help
   [ "$status" -eq 0 ]
-  assert_output_contains "Usage: system-optimize [options]"
+  assert_output_contains "Usage: system-optimize [COMMAND] [OPTIONS]"
   assert_output_contains "--undo [ID]"
   run "$SO" -h
   [ "$status" -eq 0 ]
@@ -22,6 +22,9 @@ version() { tr -d '[:space:]' < "$REPO_ROOT/VERSION"; }
   [ "$status" -eq 2 ]
   assert_output_contains "unknown option: --bogus"
   run "$SO" extra
+  [ "$status" -eq 2 ]
+  assert_output_contains "unknown command: extra"
+  run "$SO" --yes extra
   [ "$status" -eq 2 ]
   assert_output_contains "unexpected argument: extra"
   run "$SO" --only sysctl,nope -n

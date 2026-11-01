@@ -25,7 +25,7 @@ complete_words() {
   assert_output_contains "--install-tools"
   run complete_words system-optimize --un
   [ "$output" = "--undo" ]
-  run complete_words system-optimize --st
+  run complete_words system-optimize --stat
   [ "$output" = "--status" ]
 }
 
@@ -36,7 +36,7 @@ complete_words() {
   [ "$output" = "--color=always" ]
   run complete_words system-optimize --completion ""
   [ "$output" = $'bash\nzsh' ]
-  run complete_words system-optimize --only s
+  run complete_words system-optimize --only sy
   [ "$output" = $'sysctl' ]
   run complete_words system-optimize --skip cpu,l
   [ "$output" = $'cpu,legacy\ncpu,limits' ]
@@ -46,6 +46,27 @@ complete_words() {
   cd "$BATS_TEST_TMPDIR"
   run complete_words system-optimize --config som
   [ "$output" = some.conf ]
+}
+
+@test "completes the commands and their arguments" {
+  run complete_words system-optimize st
+  [ "$output" = $'status\nsteps' ]
+  run complete_words system-optimize describe sys
+  [ "$output" = sysctl ]
+  run complete_words system-optimize profile g
+  [ "$output" = gaming ]
+  run complete_words system-optimize history p
+  [ "$output" = prune ]
+  run complete_words system-optimize config d
+  [ "$output" = diff ]
+  run complete_words system-optimize -p b
+  [ "$output" = battery ]
+}
+
+@test "the completion's command list matches SO_COMMANDS" {
+  load_so
+  # shellcheck disable=SC2086,SC2154
+  assert_equal "$(printf '%s\n' $SO_COMMANDS | sort | tr '\n' ' ')" "$(printf '%s\n' $_so_commands | sort | tr '\n' ' ')"
 }
 
 @test "the completion's option and step lists match --help" {

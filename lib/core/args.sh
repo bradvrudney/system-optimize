@@ -19,6 +19,7 @@ SO_ARG_PROFILE=""
 SO_ARG_BACKEND=""
 SO_ARG_SCHEDULER=""     # --scheduler NAME
 SO_ARG_GPU_MEM=""       # --gpu-memory GIB
+SO_ARG_TUNE=""          # tune STEP...
 SO_ARG_INSTALL_TOOLS=""
 SO_ARG_FORCE=""
 SO_ARG_BENCHMARK=""
@@ -46,20 +47,36 @@ SO_JSON=0
 
 usage() {
   cat <<EOF
-Usage: system-optimize [options]                 apply the optimizations
-       system-optimize --dry-run [options]       show what would change
-       system-optimize --status [--json]         report: hardware, settings, steps, snapshots
-       system-optimize --undo [ID] [--only LIST] restore a snapshot, or only these steps' changes
-       system-optimize --list-steps | --list-snapshots
-       system-optimize --describe STEP [--json]  what a step does and would change here
-       system-optimize --benchmark-only [--json] measure CPU, memory and disk
-       system-optimize --history [--json] [--step STEP] [--limit N]
-       system-optimize --tune                    try steps one at a time; keep what is faster
-       system-optimize --check-drift             which applied steps no longer hold
-       system-optimize --export FILE | --import FILE | --diff-config FILE
-       system-optimize --self-update [--dry-run] [--source URL]
-       system-optimize --completion bash | --version | --help
+Usage: system-optimize [COMMAND] [OPTIONS]
 
+Commands (each also has the older option form, in brackets, which still works):
+  apply [STEP...]         run the default steps and the chosen opt-in ones; with
+                          STEPs, only those (the default command)
+  status                  read-only report: hardware, settings, steps   [--status]
+  steps                   list the steps, their categories and the profiles   [--list-steps]
+  describe STEP           what STEP does and what it would change here   [--describe STEP]
+  enable STEP...          apply just these steps, opt-in ones too   [--only LIST]
+  disable STEP...         undo just these steps' changes   [--undo --only LIST]
+  profile NAME            apply with a profile's opt-in steps   [--profile NAME]
+  undo [ID]               restore a snapshot (default: the newest one not undone)   [--undo]
+  snapshots               list the snapshots   [--list-snapshots]
+  benchmark               measure CPU, memory and disk; change nothing   [--benchmark-only]
+  tune [STEP...]          try steps one at a time; keep what is faster   [--tune]
+  drift                   which applied steps no longer hold   [--check-drift]
+  confirm [ID]            keep a --safe-apply run   [--confirm]
+  rollback ID             undo ID if its safe-apply rollback is pending   [--rollback ID]
+  history                 benchmarks and changes over time   [--history]
+  history prune DAYS      delete the history older than DAYS   [--history-prune DAYS]
+  history clear           delete the whole history   [--history-clear]
+  config export FILE      write the shareable settings to FILE   [--export FILE]
+  config import FILE      make FILE's settings the system's   [--import FILE]
+  config diff FILE        compare FILE's settings with these   [--diff-config FILE]
+  self-update             update system-optimize itself   [--self-update]
+  completion bash|zsh     print the shell completion   [--completion]
+  version | help
+
+EOF
+  cat <<EOF
 Tunes a Linux machine for its hardware: kernel sysctl settings sized to its
 RAM and swap (zram aware), disk I/O schedulers, the CPU power profile (through
 power-profiles-daemon or tuned when present), open-file limits and SSD trim.
@@ -81,10 +98,10 @@ Options:
       --list-snapshots    list the snapshots
       --list-steps        list the steps and the profiles
       --describe STEP     what STEP does, and what it would change on this machine
-      --only LIST         run only these steps (comma separated; opt-in ones too)
-      --skip LIST         skip these steps (comma separated)
-      --enable LIST       also run these opt-in steps
-      --profile NAME      also run a profile's opt-in steps ($(join_by ', ' "${SO_PROFILES[@]}"))
+  -o, --only LIST         run only these steps (comma separated; opt-in ones too)
+  -x, --skip LIST         skip these steps (comma separated)
+  -e, --enable LIST       also run these opt-in steps
+  -p, --profile NAME      also run a profile's opt-in steps ($(join_by ', ' "${SO_PROFILES[@]}"))
       --backend NAME      where kernel settings go: auto (default), files or tuned
       --scheduler NAME    also run the "scheduler" step with this sched_ext scheduler
                           (auto, bpfland, lavd, flash, cosmos, rusty)
@@ -93,9 +110,9 @@ Options:
       --install-tools     install the recommended helpers that are missing
                           (earlyoom, irqbalance, zram-generator)
       --force             run even where a pre-flight check says no (a container)
-      --benchmark         measure CPU, memory and disk before and after the run
+  -b, --benchmark         measure CPU, memory and disk before and after the run
       --benchmark-only    measure, change nothing
-      --safe-apply        undo the run by itself unless --confirm comes in time
+  -s, --safe-apply        undo the run by itself unless --confirm comes in time
                           (SAFE_APPLY_TIMEOUT seconds, default 300), and at once
                           when --benchmark shows it slower
       --confirm [ID]      keep a --safe-apply run (cancels its rollback)
@@ -111,7 +128,7 @@ Options:
       --export FILE       write the settings to FILE (no machine identifiers)
       --import FILE       make FILE's settings the system's (/etc/system-optimize.conf)
       --diff-config FILE  compare FILE's settings with the ones in effect
-      --json              machine-readable output (see docs/json.md)
+  -j, --json              machine-readable output (see docs/json.md)
   -v, --verbose           show every command that is run
   -q, --quiet             hide third-party output; show only status lines
       --no-color          disable colours (NO_COLOR and non-TTY output do too)
@@ -148,9 +165,94 @@ args_is_snapshot_id() {
   [[ "$1" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || [ "$1" = latest ]
 }
 
-# args_parse "$@": fill SO_ARG_*. Returns 2 on a usage error.
+SO_ARG_CMD=""           # the command word, when one was given
+SO_ARG_POS=()           # the words after it
+
+# SO_COMMANDS: the command words (see usage).
+SO_COMMANDS="apply status steps describe enable disable profile undo snapshots benchmark tune drift"
+SO_COMMANDS+=" confirm rollback history config self-update completion version help"
+
+# args_command: turn the command word and its words (SO_ARG_CMD,
+# SO_ARG_POS) into the option form. Returns 2 on a usage error.
+args_command() {
+  local n=${#SO_ARG_POS[@]} w list
+  _args_none() { [ "$n" -eq 0 ] || { log_error "$SO_ARG_CMD takes no argument: ${SO_ARG_POS[*]}"; return 2; }; }
+  _args_list() { list=$(IFS=,; printf '%s' "${SO_ARG_POS[*]}"); }
+  case "$SO_ARG_CMD" in
+    ""|apply)
+      if [ "$n" -gt 0 ]; then _args_list; SO_ARG_ONLY="$list"; fi ;;
+    status) _args_none || return 2; SO_ARG_MODE=status ;;
+    steps) _args_none || return 2; SO_ARG_MODE=list-steps ;;
+    snapshots) _args_none || return 2; SO_ARG_MODE=list-snapshots ;;
+    describe)
+      [ "$n" -eq 1 ] || { log_error "describe takes one step"; return 2; }
+      SO_ARG_MODE=describe; SO_ARG_DESCRIBE="${SO_ARG_POS[0]}" ;;
+    enable)
+      [ "$n" -gt 0 ] || { log_error "enable takes one or more steps"; return 2; }
+      _args_list; SO_ARG_ONLY="$list" ;;
+    disable)
+      [ "$n" -gt 0 ] || { log_error "disable takes one or more steps"; return 2; }
+      _args_list; SO_ARG_MODE=undo; SO_ARG_ONLY="$list" ;;
+    profile)
+      [ "$n" -eq 1 ] || { log_error "profile takes a name: $(join_by ', ' "${SO_PROFILES[@]}")"; return 2; }
+      SO_ARG_PROFILE="${SO_ARG_POS[0]}" ;;
+    undo|confirm)
+      [ "$n" -le 1 ] || { log_error "$SO_ARG_CMD takes at most one snapshot ID"; return 2; }
+      SO_ARG_MODE="$SO_ARG_CMD"
+      if [ "$n" -eq 1 ]; then
+        args_is_snapshot_id "${SO_ARG_POS[0]}" || { log_error "not a snapshot ID: ${SO_ARG_POS[0]}"; return 2; }
+        SO_ARG_SNAPSHOT="${SO_ARG_POS[0]}"
+      fi ;;
+    rollback)
+      [ "$n" -eq 1 ] && args_is_snapshot_id "${SO_ARG_POS[0]}" || { log_error "rollback takes a snapshot ID"; return 2; }
+      SO_ARG_MODE=rollback; SO_ARG_SNAPSHOT="${SO_ARG_POS[0]}" ;;
+    benchmark) _args_none || return 2; SO_ARG_MODE=benchmark-only ;;
+    tune)
+      SO_ARG_MODE=tune
+      if [ "$n" -gt 0 ]; then _args_list; SO_ARG_TUNE="$list"; fi ;;
+    drift) _args_none || return 2; SO_ARG_MODE=check-drift ;;
+    history)
+      case "${SO_ARG_POS[0]:-}" in
+        "") SO_ARG_MODE=history ;;
+        prune) [ "$n" -eq 2 ] || { log_error "history prune takes a number of days"; return 2; }
+               SO_ARG_MODE=history-prune; SO_ARG_DAYS="${SO_ARG_POS[1]}" ;;
+        clear) [ "$n" -eq 1 ] || { log_error "history clear takes no argument"; return 2; }
+               SO_ARG_MODE=history-clear ;;
+        *) log_error "history: unknown action ${SO_ARG_POS[0]} (prune DAYS, clear)"; return 2 ;;
+      esac ;;
+    config)
+      w="${SO_ARG_POS[0]:-}"
+      case "$w" in
+        export|import|diff) ;;
+        *) log_error "config takes export, import or diff, and a file"; return 2 ;;
+      esac
+      [ "$n" -eq 2 ] || { log_error "config $w takes a file"; return 2; }
+      SO_ARG_FILE="${SO_ARG_POS[1]}"
+      if [ "$w" = diff ]; then SO_ARG_MODE=diff-config; else SO_ARG_MODE="$w"; fi ;;
+    self-update) _args_none || return 2; SO_ARG_SELF_UPDATE=1 ;;
+    completion)
+      [ "$n" -eq 1 ] || { log_error "completion takes bash or zsh"; return 2; }
+      SO_ARG_COMPLETION="${SO_ARG_POS[0]}" ;;
+    version) _args_none || return 2; SO_ARG_VERSION=1 ;;
+    help) SO_ARG_HELP=1 ;;
+  esac
+  unset -f _args_none _args_list
+  return 0
+}
+
+# args_parse "$@": fill SO_ARG_*. Returns 2 on a usage error. A command word
+# may come first; the words after it are its arguments.
 args_parse() {
   local opt val
+  SO_ARG_CMD=""; SO_ARG_POS=()
+  if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+    if list_has "$SO_COMMANDS" "$1"; then
+      SO_ARG_CMD="$1"; shift
+    else
+      log_error "unknown command: $1 (see system-optimize help)"
+      return 2
+    fi
+  fi
   while [ $# -gt 0 ]; do
     opt="$1"; val=""
     # Split --opt=value.
@@ -159,6 +261,13 @@ args_parse() {
     esac
     case "$opt" in
       -n|--dry-run) SO_ARG_DRY_RUN=1 ;;
+      -j) SO_ARG_JSON=1 ;;
+      -b) SO_ARG_BENCHMARK=1 ;;
+      -s) SO_ARG_SAFE_APPLY=1 ;;
+      -o) args_need "$opt" "${2:-}" || return 2; SO_ARG_ONLY="$2"; shift ;;
+      -x) args_need "$opt" "${2:-}" || return 2; SO_ARG_SKIP="$2"; shift ;;
+      -e) args_need "$opt" "${2:-}" || return 2; SO_ARG_ENABLE="$2"; shift ;;
+      -p) args_need "$opt" "${2:-}" || return 2; SO_ARG_PROFILE="$2"; shift ;;
       -d) SO_ARG_DRY_RUN=1 ;;   # Ed's 1.x short form of --dry-run
       -y|--yes) SO_ARG_YES=1 ;;
       -v|--verbose) SO_ARG_VERBOSE=1 ;;
@@ -223,12 +332,15 @@ args_parse() {
         log_error "unknown option: $opt"
         return 2 ;;
       *)
-        log_error "unexpected argument: $opt"
-        return 2 ;;
+        if [ -z "$SO_ARG_CMD" ]; then
+          log_error "unexpected argument: $opt"
+          return 2
+        fi
+        SO_ARG_POS+=("$opt") ;;
     esac
     shift
   done
-  return 0
+  args_command
 }
 
 # args_apply: layer flags over the loaded configuration and export the
@@ -257,6 +369,7 @@ args_apply() {
     log_error "--backend takes auto, files or tuned"
     return 2
   fi
+  [ -z "$SO_ARG_TUNE" ] || config_set TUNE_STEPS "$SO_ARG_TUNE" flag || return 2
   if [ -n "$SO_ARG_SCHEDULER" ]; then
     config_set SCHEDULER "$SO_ARG_SCHEDULER" flag || { log_error "--scheduler takes auto, bpfland, lavd, flash, cosmos or rusty"; return 2; }
     SO_ARG_ENABLE+="${SO_ARG_ENABLE:+,}scheduler"
