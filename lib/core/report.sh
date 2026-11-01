@@ -46,7 +46,7 @@ active_profile() {
 status_json() {
   local s line result applied sep="" snaps="" prof id total open steps due
   printf '{"version":%s,"capabilities":%s,"steps":[' "$(json_str "$(version_string)")" \
-    "$(json_str_array $SO_CAPABILITIES)"
+    "$(json_word_array "$SO_CAPABILITIES")"
   for s in "${SO_STEPS[@]}"; do
     line=$(step_probe "$s" | head -n1)
     tsv_split "$line"
@@ -55,13 +55,13 @@ status_json() {
     printf '%s{"name":%s,"kind":%s,"category":%s,"applied":%s,"title":%s,"summary":%s,"flags":%s,"state":%s,"note":%s}' \
       "$sep" "$(json_str "$s")" "$(json_str "${SO_STEP_KIND[$s]}")" "$(json_str "${SO_STEP_CATEGORY[$s]}")" "$applied" \
       "$(json_str "${SO_STEP_TITLE[$s]}")" "$(json_str "${SO_STEP_SUMMARY[$s]}")" \
-      "$(json_str_array ${SO_STEP_FLAGS[$s]//,/ })" "$(json_str "${result:-unknown}")" "$(json_str "${SO_F[2]-}")"
+      "$(json_word_array "${SO_STEP_FLAGS[$s]}")" "$(json_str "${result:-unknown}")" "$(json_str "${SO_F[2]-}")"
     sep=","
   done
   printf '],"profiles":%s,"profile_steps":{' "$(json_str_array "${SO_PROFILES[@]}")"
   sep=""
   for s in "${SO_PROFILES[@]}"; do
-    printf '%s%s:%s' "$sep" "$(json_str "$s")" "$(json_str_array ${SO_PROFILE_STEPS[$s]})"
+    printf '%s%s:%s' "$sep" "$(json_str "$s")" "$(json_word_array "${SO_PROFILE_STEPS[$s]}")"
     sep=","
   done
   prof=$(active_profile)
@@ -74,7 +74,7 @@ status_json() {
     sep=","
   done < <(hist_snapshot_rows)
   printf '%s],"categories":%s,"warnings":%s,"hardware":%s,"helpers_running":%s}\n' "$snaps" \
-    "$(categories_json)" "$(warnings_json)" "$(hw_json)" "$(json_str_array $(helpers_running))"
+    "$(categories_json)" "$(warnings_json)" "$(hw_json)" "$(json_word_array "$(helpers_running)")"
 }
 
 # categories_json: [{"id","title"}] in display order.
@@ -119,14 +119,14 @@ list_steps_main() {
     for s in "${SO_STEPS[@]}"; do
       printf '%s{"name":%s,"kind":%s,"category":%s,"title":%s,"summary":%s,"flags":%s}' "$sep" "$(json_str "$s")" \
         "$(json_str "${SO_STEP_KIND[$s]}")" "$(json_str "${SO_STEP_CATEGORY[$s]}")" "$(json_str "${SO_STEP_TITLE[$s]}")" \
-        "$(json_str "${SO_STEP_SUMMARY[$s]}")" "$(json_str_array ${SO_STEP_FLAGS[$s]//,/ })"
+        "$(json_str "${SO_STEP_SUMMARY[$s]}")" "$(json_word_array "${SO_STEP_FLAGS[$s]}")"
       sep=","
     done
     printf '],"profiles":['
     sep=""
     for p in "${SO_PROFILES[@]}"; do
       printf '%s{"name":%s,"title":%s,"steps":%s}' "$sep" "$(json_str "$p")" \
-        "$(json_str "${SO_PROFILE_TITLE[$p]}")" "$(json_str_array ${SO_PROFILE_STEPS[$p]})"
+        "$(json_str "${SO_PROFILE_TITLE[$p]}")" "$(json_word_array "${SO_PROFILE_STEPS[$p]}")"
       sep=","
     done
     printf ']}\n'
@@ -161,7 +161,7 @@ describe_main() {
   if [ "$SO_JSON" = 1 ]; then
     printf '{"name":%s,"kind":%s,"category":%s,"title":%s,"summary":%s,"flags":%s,"applied":%s,"state":%s,"note":%s,"doc":%s,"changes":%s}\n' \
       "$(json_str "$s")" "$(json_str "${SO_STEP_KIND[$s]}")" "$(json_str "${SO_STEP_CATEGORY[$s]}")" "$(json_str "${SO_STEP_TITLE[$s]}")" \
-      "$(json_str "${SO_STEP_SUMMARY[$s]}")" "$(json_str_array ${SO_STEP_FLAGS[$s]//,/ })" \
+      "$(json_str "${SO_STEP_SUMMARY[$s]}")" "$(json_word_array "${SO_STEP_FLAGS[$s]}")" \
       "$(probe_applied "$result" "${SO_STEP_FLAGS[$s]}")" "$(json_str "$result")" "$(json_str "$note")" \
       "$(json_str "$doc")" "$(plan_json "${plan[@]+"${plan[@]}"}")"
     return 0

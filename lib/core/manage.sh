@@ -6,19 +6,23 @@
 # "result<TAB>RESULT<TAB>NOTE", then one "plan<TAB>KIND<TAB>TARGET<TAB>CURRENT<TAB>WANTED"
 # line per change it would make. Nothing is changed or printed otherwise.
 step_probe() {
-  local name="$1"
-  (
-    exec {so_res}>&1
-    exec >/dev/null 2>&1
-    exec {SO_OUT}>/dev/null
-    SO_DRY_RUN=1 SO_PLAN_CAPTURE=1 SO_LOG_FILE="" SO_VERBOSE=0
-    SO_PLAN=()
-    STEP_RESULT=""; STEP_NOTE=""; SO_CURRENT_STEP="$name"
-    "${SO_STEP_FUNC[$name]}"
-    [ -n "$STEP_RESULT" ] || STEP_RESULT=ok
-    printf 'result\t%s\t%s\n' "$STEP_RESULT" "${STEP_NOTE//[$'\t\n']/ }" >&"$so_res"
-    for p in "${SO_PLAN[@]+"${SO_PLAN[@]}"}"; do printf 'plan\t%s\n' "$p" >&"$so_res"; done
-  )
+  ( _step_probe_in_subshell "$1" )
+}
+
+# _step_probe_in_subshell STEP: step_probe's body; it changes the run's
+# globals, so it is only ever called in a subshell.
+_step_probe_in_subshell() {
+  local name="$1" so_res p
+  exec {so_res}>&1
+  exec >/dev/null 2>&1
+  exec {SO_OUT}>/dev/null
+  SO_DRY_RUN=1 SO_PLAN_CAPTURE=1 SO_LOG_FILE="" SO_VERBOSE=0
+  SO_PLAN=()
+  STEP_RESULT=""; STEP_NOTE=""; SO_CURRENT_STEP="$name"
+  "${SO_STEP_FUNC[$name]}"
+  [ -n "$STEP_RESULT" ] || STEP_RESULT=ok
+  printf 'result\t%s\t%s\n' "$STEP_RESULT" "${STEP_NOTE//[$'\t\n']/ }" >&"$so_res"
+  for p in "${SO_PLAN[@]+"${SO_PLAN[@]}"}"; do printf 'plan\t%s\n' "$p" >&"$so_res"; done
 }
 
 # probe_applied RESULT FLAGS: is the step in place? true (nothing to do),
@@ -81,6 +85,7 @@ safe_schedule() {
       return 1
     fi
   else
+    # shellcheck disable=SC2016  # the positional parameters are sh's own
     setsid sh -c 'sleep "$1"; exec "$2" --rollback "$3" --yes --no-color' sh "$secs" "$SO_BIN" "$id" \
       </dev/null >/dev/null 2>&1 &
   fi
@@ -266,7 +271,7 @@ tune_main() {
     rows+=("$(bench_row)")
     pct=$(bench_change_pct base)
     verdict=$(bench_verdict "$pct")
-    prev="$BENCH_SAVED_base_id"
+    prev="${BENCH_SAVED_base_id:-}"
     if [ "$verdict" = better ]; then
       log_ok "tune: $s is ${pct} % faster; kept"
       kept+=("$s")

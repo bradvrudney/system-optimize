@@ -46,6 +46,9 @@ SO_LOG_PATH="${SO_LOG_PATH:-}"   # --log FILE
 SO_JSON=0
 
 usage() {
+  local defaults optins
+  defaults=$(steps_of_kind default | paste -sd, - | sed 's/,/, /g')
+  optins=$(steps_of_kind opt-in | paste -sd, - | sed 's/,/, /g')
   cat <<EOF
 Usage: system-optimize [COMMAND] [OPTIONS]
 
@@ -143,8 +146,8 @@ Options:
       --version           print the version and exit
   -h, --help              show this help and exit
 
-Default steps: $(join_by ', ' $(steps_of_kind default))
-Opt-in steps:  $(join_by ', ' $(steps_of_kind opt-in))
+Default steps: $defaults
+Opt-in steps:  $optins
 
 Config: \${XDG_CONFIG_HOME:-~/.config}/system-optimize/config and
 /etc/system-optimize.conf (KEY=value). Environment variables override the
@@ -182,8 +185,8 @@ args_command() {
     ""|apply)
       if [ "$n" -gt 0 ]; then _args_list; SO_ARG_ONLY="$list"; fi ;;
     status) _args_none || return 2; SO_ARG_MODE=status ;;
-    steps) _args_none || return 2; SO_ARG_MODE=list-steps ;;
-    snapshots) _args_none || return 2; SO_ARG_MODE=list-snapshots ;;
+    steps) _args_none || return 2; SO_ARG_MODE="list-steps" ;;
+    snapshots) _args_none || return 2; SO_ARG_MODE="list-snapshots" ;;
     describe)
       [ "$n" -eq 1 ] || { log_error "describe takes one step"; return 2; }
       SO_ARG_MODE=describe; SO_ARG_DESCRIBE="${SO_ARG_POS[0]}" ;;
@@ -204,7 +207,9 @@ args_command() {
         SO_ARG_SNAPSHOT="${SO_ARG_POS[0]}"
       fi ;;
     rollback)
-      [ "$n" -eq 1 ] && args_is_snapshot_id "${SO_ARG_POS[0]}" || { log_error "rollback takes a snapshot ID"; return 2; }
+      if [ "$n" -ne 1 ] || ! args_is_snapshot_id "${SO_ARG_POS[0]}"; then
+        log_error "rollback takes a snapshot ID"; return 2
+      fi
       SO_ARG_MODE=rollback; SO_ARG_SNAPSHOT="${SO_ARG_POS[0]}" ;;
     benchmark) _args_none || return 2; SO_ARG_MODE=benchmark-only ;;
     tune)

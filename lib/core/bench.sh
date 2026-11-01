@@ -239,7 +239,7 @@ bench_change_pct() {
   local k b bu ratios=()
   for k in $BENCH_KEYS $BENCH_LLM_KEYS; do
     b="BENCH_SAVED_${1}_${k}"; bu="BENCH_SAVED_${1}_${k}_unit"
-    [ -n "${!b}" ] && [ -n "${BENCH_SCORE[$k]}" ] && [ "${!bu}" = "${BENCH_UNIT[$k]}" ] || continue
+    if [ -z "${!b}" ] || [ -z "${BENCH_SCORE[$k]}" ] || [ "${!bu}" != "${BENCH_UNIT[$k]}" ]; then continue; fi
     ratios+=("$(awk -v a="${BENCH_SCORE[$k]}" -v b="${!b}" 'BEGIN { if (b > 0) printf "%.6f", a / b }')")
   done
   [ ${#ratios[@]} -gt 0 ] || return 0
@@ -287,7 +287,7 @@ bench_json() {
 bench_only_main() {
   local rc=0 k
   bench_run standalone || rc=1
-  [ "$rc" != 0 ] || bench_record
+  [ "$rc" != 0 ] || bench_record ""
   if [ "$SO_JSON" = 1 ]; then
     if [ "$rc" = 0 ]; then bench_json; printf '\n'; else printf '{"error":"no benchmark tool: install sysbench (or stress-ng) and fio"}\n'; fi
     return "$rc"

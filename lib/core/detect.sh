@@ -99,13 +99,13 @@ hw_facts() {
   local v f
   _hf() { [ -n "$2" ] && printf '%s\t%s\n' "$1" "$2"; return 0; }
   v=$(_sysfs_value /sys/devices/system/cpu/amd_pstate/status) && _hf amd_pstate "$v"
-  for f in "$(so_path /sys/devices/system/cpu/cpufreq)"/policy0; do
-    [ -d "$f" ] || continue
+  f="$(so_path /sys/devices/system/cpu/cpufreq)/policy0"
+  if [ -d "$f" ]; then
     v=$(read_line "$f/scaling_driver" 2>/dev/null) && _hf cpufreq_driver "$v"
     v=$(read_line "$f/scaling_governor" 2>/dev/null) && _hf governor "$v"
     v=$(read_line "$f/energy_performance_preference" 2>/dev/null) && _hf epp "$v"
     v=$(read_line "$f/energy_performance_available_preferences" 2>/dev/null) && _hf epp_choices "$v"
-  done
+  fi
   v=$(_sysfs_value /sys/devices/system/cpu/cpufreq/boost) && _hf boost "$v"
   v=$(_sysfs_value /sys/firmware/acpi/platform_profile) && _hf platform_profile "$v"
   v=$(_sysfs_value /sys/firmware/acpi/platform_profile_choices) && _hf platform_profile_choices "$v"

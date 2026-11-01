@@ -58,7 +58,7 @@ share_read() {
   declare -gA SO_SHARE=()
   [ -r "$file" ] || { log_error "cannot read $file"; return 1; }
   for key in "${!SO_CFG[@]}"; do saved[$key]="${SO_CFG[$key]}"; saved_src[$key]="${SO_CFG_SOURCE[$key]}"; done
-  for key in "${!SO_CFG[@]}"; do SO_CFG_SOURCE[$key]=unset; done
+  for key in "${!SO_CFG[@]}"; do SO_CFG_SOURCE[$key]="unset"; done
   config_parse_file "$file"
   for key in "${!SO_CFG[@]}"; do
     if [ "${SO_CFG_SOURCE[$key]}" != unset ]; then

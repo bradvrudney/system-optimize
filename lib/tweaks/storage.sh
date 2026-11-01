@@ -107,14 +107,14 @@ storage_opt_has() {
 # storage_live MP: "TYPE OPTIONS" of the mount at MP now (the last entry of
 # /proc/mounts for it), or failure when nothing is mounted there.
 storage_live() {
-  local f _dev mp type opts _rest found=""
+  local f _dev mp type opts _rest live_now=""
   f=$(so_path /proc/mounts)
   [ -r "$f" ] || return 1
   while read -r _dev mp type opts _rest; do
-    [ "$mp" = "$1" ] && found="$type $opts"
+    [ "$mp" = "$1" ] && live_now="$type $opts"
   done < "$f"
-  [ -n "$found" ] || return 1
-  printf '%s\n' "$found"
+  [ -n "$live_now" ] || return 1
+  printf '%s\n' "$live_now"
 }
 
 # storage_source_removable SOURCE: the fstab SOURCE (UUID=, LABEL=, a /dev
@@ -707,9 +707,9 @@ indexer_gnome() {
   fi
   mapfile -t items < <(indexer_gvariant_list "$cur")
   for name in "${SO_INDEXER_NAMES[@]}"; do
-    local x found=0
-    for x in "${items[@]+"${items[@]}"}"; do [ "$x" = "$name" ] && { found=1; break; }; done
-    [ "$found" = 1 ] && continue
+    local x seen=0
+    for x in "${items[@]+"${items[@]}"}"; do [ "$x" = "$name" ] && { seen=1; break; }; done
+    [ "$seen" = 1 ] && continue
     items+=("$name"); added=$((added + 1))
   done
   if [ "$added" = 0 ]; then
@@ -745,9 +745,9 @@ indexer_kde() {
   fi
   IFS=, read -r -a items <<< "$cur"
   for name in "${SO_INDEXER_NAMES[@]}"; do
-    local x found=0
-    for x in "${items[@]+"${items[@]}"}"; do [ "$x" = "$name" ] && { found=1; break; }; done
-    [ "$found" = 1 ] && continue
+    local x seen=0
+    for x in "${items[@]+"${items[@]}"}"; do [ "$x" = "$name" ] && { seen=1; break; }; done
+    [ "$seen" = 1 ] && continue
     items+=("$name"); added=$((added + 1))
   done
   if [ "$added" = 0 ]; then

@@ -42,6 +42,15 @@ json_str_array() {
   printf ']'
 }
 
+# json_word_array WORDS: an array of the words in WORDS (split on spaces,
+# commas and newlines).
+json_word_array() {
+  local -a w=()
+  local IFS=$', \t\n'
+  read -r -d '' -a w <<< "$1" || true
+  json_str_array "${w[@]+"${w[@]}"}"
+}
+
 # json_join ITEMS...: already-encoded values joined with commas.
 json_join() {
   local IFS=,

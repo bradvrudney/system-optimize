@@ -199,7 +199,8 @@ gs_get() { cat "$STUB_STATE/gsettings/$1 $2"; }
 # as_desktop [DESKTOP] [TYPE]: the current user is the desktop user of a
 # DESKTOP (default gnome) TYPE (default wayland) session.
 as_desktop() {
-  export SO_DESKTOP_USER="$(id -un)" SO_DESKTOP="${1:-gnome}" SO_SESSION_TYPE="${2:-wayland}"
+  SO_DESKTOP_USER=$(id -un)
+  export SO_DESKTOP_USER SO_DESKTOP="${1:-gnome}" SO_SESSION_TYPE="${2:-wayland}"
 }
 
 # write_legacy: the three files Ed's 1.x script wrote.
@@ -381,10 +382,11 @@ load_so() {
     source "$REPO_ROOT/lib/core/$f.sh"
   done
   # The step modules in the entry point's order (it is the run order).
-  for f in $(sed -n 's|^source "\$SO_ROOT_DIR/\(lib/tweaks/[^"]*\.sh\)"$|\1|p' "$REPO_ROOT/bin/system-optimize"); do
+  # shellcheck disable=SC2016  # $SO_ROOT_DIR is matched literally
+  while IFS= read -r f; do
     # shellcheck disable=SC1090
     source "$REPO_ROOT/$f"
-  done
+  done < <(sed -n 's|^source "\$SO_ROOT_DIR/\(lib/tweaks/[^"]*\.sh\)"$|\1|p' "$REPO_ROOT/bin/system-optimize")
   # shellcheck disable=SC1091
   source "$REPO_ROOT/lib/core/status.sh"
   # version_string lives in the entry point; a small stand-in for the tests.

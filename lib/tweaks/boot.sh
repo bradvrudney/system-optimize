@@ -85,7 +85,7 @@ boot_size_bytes() {
 # without our drop-in (the main file, then the drop-ins in name order, the
 # last one winning), or failure when none sets it.
 boot_journal_other_cap() {
-  local f v found="" files=() names
+  local f v cap_found="" files=() names
   files=("$(so_path /etc/systemd/journald.conf)")
   names=$(for f in "$(so_path /usr/lib/systemd/journald.conf.d)"/*.conf "$(so_path /etc/systemd/journald.conf.d)"/*.conf; do
     [ -f "$f" ] && printf '%s\n' "${f##*/}"
@@ -101,10 +101,10 @@ boot_journal_other_cap() {
   for f in "${files[@]}"; do
     [ -r "$f" ] || continue
     v=$(sed -n 's/^[[:space:]]*SystemMaxUse[[:space:]]*=[[:space:]]*\([^[:space:]#]*\).*/\1/p' "$f" | tail -n1)
-    [ -n "$v" ] && found="$v ${f#"${SO_ROOT:-}"}"
+    [ -n "$v" ] && cap_found="$v ${f#"${SO_ROOT:-}"}"
   done
-  [ -n "$found" ] || return 1
-  printf '%s\n' "$found"
+  [ -n "$cap_found" ] || return 1
+  printf '%s\n' "$cap_found"
 }
 
 journal_step() {
