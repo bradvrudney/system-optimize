@@ -17,8 +17,8 @@ from . import VERSION
 from . import settings as settings_mod
 from .cli import CliError
 from .credits import GROUPS
-from .model import (PressureAlerts, actions_available, baseline_compare, categories, category_count, change_log,
-                    feature_entries, fmt_pct, gpu_top_text, llm_line, measured_effect, readout_lines, score_series,
+from .model import (CHAT_PROMPT_SECONDS, PressureAlerts, actions_available, baseline_compare, categories,
+                    category_count, change_log, chat_prompt, feature_entries, fmt_pct, gpu_top_text, llm_line, measured_effect, readout_lines, score_series,
                     warning_lines)
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .theme import SERIES, colors, mono, resolve, stylesheet
@@ -200,6 +200,12 @@ class Panel(QtWidgets.QWidget):
             hints.colorSchemeChanged.connect(lambda *_: self.apply_theme())
         self.apply_theme()
         self._on_info()
+        # example questions take turns as the agent fields' placeholder text
+        self._prompt_i = int(time.time() // CHAT_PROMPT_SECONDS)
+        self._rotate_prompt()
+        self.prompt_timer = QtCore.QTimer(self)
+        self.prompt_timer.timeout.connect(self._rotate_prompt)
+        self.prompt_timer.start(CHAT_PROMPT_SECONDS * 1000)
 
     # -- theme -------------------------------------------------------
     def apply_theme(self, setting=None):
@@ -924,6 +930,14 @@ class Panel(QtWidgets.QWidget):
                                                          self._refresh_agent()))
         elif nxt:
             self.agent_status.setText(self.agent_status.text() + " · next " + nxt)
+
+    def _rotate_prompt(self):
+        """Show the next example question in each empty agent field."""
+        self._prompt_i += 1
+        text = chat_prompt(self._prompt_i)
+        for edit in (self.chat_edit, self.ask_edit):
+            if not edit.text():
+                edit.setPlaceholderText(text)
 
     def open_chat(self):
         self.stack.setCurrentWidget(self.chat)

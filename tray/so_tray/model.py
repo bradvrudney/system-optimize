@@ -280,6 +280,41 @@ def warning_lines(sample, info):
 
 # -- LLM inference benchmark (llama-bench) ------------------------------------
 
+# Example questions for the tuning agent, shown in turn as the chat field's
+# placeholder. Each stays within what the agent can do: read the status, the
+# steps and profiles, the benchmark history, run the benchmark, and propose
+# one change (a step on or off, a profile, or undoing the last run) for you to
+# approve. Short enough to fit the field.
+CHAT_PROMPTS = (
+    "Is anything worth changing on this machine?",
+    "How does my last benchmark compare?",
+    "Run a benchmark and explain the scores",
+    "What did my last setting change do?",
+    "Which steps aren't turned on yet?",
+    "Which profile suits local LLM work?",
+    "Should I switch to the gaming profile?",
+    "What does the battery profile change?",
+    "Did the io step help my disk scores?",
+    "Is the mglru step worth turning on?",
+    "Would gpu-memory help my local models?",
+    "Should I undo the last run?",
+    "How have my scores moved since baseline?",
+    "Which change helped the most so far?",
+    "Are my kernel settings tuned yet?",
+    "Is my power profile a good fit?",
+    "Are any tuning tools in conflict?",
+    "Has llama-bench speed improved?",
+    "Suggest one safe change to try next",
+    "Explain what the scheduler step does",
+)
+CHAT_PROMPT_SECONDS = 6
+
+
+def chat_prompt(i):
+    """The i-th example prompt as placeholder text, wrapping round."""
+    return "e.g. " + CHAT_PROMPTS[i % len(CHAT_PROMPTS)]
+
+
 LLM_SCORES = (("llm_pp", "prompt"), ("llm_tg", "generation"))
 
 
