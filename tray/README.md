@@ -6,9 +6,9 @@ system-optimize has changed, and whether each change made the benchmark
 better or worse. Every change goes through `system-optimize` itself, behind a
 polkit password prompt, and can be undone.
 
-| Dashboard | A step's page | About |
+| Dashboard | A step's page | A resource's page |
 |---|---|---|
-| ![Dashboard, dark](docs/screenshots/dashboard-dark.png) | ![Feature page, light](docs/screenshots/feature-light.png) | ![About, dark](docs/screenshots/about-dark.png) |
+| ![Dashboard, dark](docs/screenshots/dashboard-dark.png) | ![Feature page, light](docs/screenshots/feature-light.png) | ![Resource page, dark](docs/screenshots/resource-dark.png) |
 
 ## What you get
 
@@ -25,6 +25,10 @@ polkit password prompt, and can be undone.
   `system-optimize --describe`), a chart of benchmark scores over time with
   this step's changes marked, and a change log with the measured effect of
   each change.
+- **A page per resource**: click a tile for that resource's daily averages
+  over the last 30 days, with setting changes marked and a dashed line for
+  the average between changes, its 30-day average, the change since the
+  first setting change, and the 7 days before and after each change.
 - **Light, dark or system** theme. System follows the desktop live.
 - **About**, which credits the open-source projects system-optimize builds
   on (one list, `data/credits.json`, kept in step with `docs/tools.md` by a
@@ -160,6 +164,29 @@ a polkit rule that lets the agent change the system with no password. That
 is your call to make, and it is a few lines in `/etc/polkit-1/rules.d/` if
 you ever want it.
 
+## Resource history
+
+The tray records what the tiles show (CPU load, memory, CPU temperature,
+disk I/O) once a minute into `~/.local/state/system-optimize-tray/resources.db`,
+as hourly and daily averages with minimum and maximum. Hourly rows are kept
+for 90 days and daily rows for good, so the file stays small (about 24 rows
+a day per resource). Nothing leaves the computer.
+
+On GNOME the extension's monitor records instead (`system-optimize-tray-backend
+monitor --watch --record`), since the tray app isn't running there. A
+`--panel` window never records, so nothing is counted twice. Turn it off on
+any resource page, or with `RECORD_HISTORY=0`.
+
+The setting changes come from `system-optimize --history --json`; without
+it the pages still show the averages, just without markers. A change's
+effect compares the 7 days before it with the 7 days after; changes made in
+the same run count as one. These are averages of a machine in daily use, so
+a change in workload moves them as much as a setting does.
+
+`system-optimize-tray --resource cpu|memory|cpu_temp|disk` opens a resource
+page directly; the GNOME menu's readouts and its Resource history submenu do
+the same.
+
 ## Settings
 
 `~/.config/system-optimize/tray.conf`, shared with the GNOME extension:
@@ -168,6 +195,7 @@ you ever want it.
 |---|---|---|
 | `THEME` | `system` | `light`, `dark` or `system` (also in the panel's ◐ menu) |
 | `EXPANDED` | empty | categories you opened, e.g. `memory,storage` |
+| `RECORD_HISTORY` | `1` | keep resource averages; `0` to stop |
 
 ## Development
 

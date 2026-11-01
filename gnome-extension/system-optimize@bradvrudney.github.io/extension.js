@@ -18,7 +18,7 @@ import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {actionsAvailable, categories, categoryCount, panelLabel, parseJsonLine,
-    readoutLines, resultMessage, themeFromConfig} from './lib.js';
+    readoutLines, readoutResource, resultMessage, RESOURCES, themeFromConfig} from './lib.js';
 
 const BACKEND = 'system-optimize-tray-backend';
 const AGENT = 'system-optimize-agent';
@@ -108,10 +108,18 @@ class Indicator extends PanelMenu.Button {
 
         this._readout = [];
         for (let i = 0; i < READOUT_ROWS; i++) {
-            const item = new PopupMenu.PopupMenuItem('', {reactive: false});
+            const item = new PopupMenu.PopupMenuItem('');
+            item.connect('activate', () => {
+                if (item._resource)
+                    this._openPanel(['--resource', item._resource]);
+            });
             this._readout.push(item);
             this.menu.addMenuItem(item);
         }
+        const history = new PopupMenu.PopupSubMenuMenuItem('Resource history');
+        for (const [key, title] of RESOURCES)
+            history.menu.addAction(title, () => this._openPanel(['--resource', key]));
+        this.menu.addMenuItem(history);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._featureSection = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._featureSection);
@@ -140,7 +148,7 @@ class Indicator extends PanelMenu.Button {
         }
         try {
             this._monitor = Gio.Subprocess.new(
-                [this._backend, 'monitor', '--watch', '--interval', '2'],
+                [this._backend, 'monitor', '--watch', '--interval', '2', '--record'],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
         } catch (e) {
             console.warn(`system-optimize: cannot start the monitor: ${e.message}`);
@@ -189,6 +197,8 @@ class Indicator extends PanelMenu.Button {
         this._readout.forEach((item, i) => {
             item.label.text = lines[i] ?? '';
             item.visible = i < lines.length;
+            item._resource = readoutResource(lines[i]);
+            item.reactive = Boolean(item._resource);
         });
     }
 

@@ -52,6 +52,32 @@ class FakeAgent:
         return FakeAgentReply()
 
 
+def seed_history():
+    """Five weeks of made-up hourly readings, a little cooler and calmer
+    after each of the fake CLI's setting changes (Oct 8, 12 and 20)."""
+    import random
+    import time
+    from datetime import datetime
+    from so_tray.history import History
+    rnd = random.Random(7)
+    steps = [(datetime.fromisoformat(t).timestamp(), d) for t, d in
+             (("2026-10-08T21:10:00-04:00", 1.0), ("2026-10-12T20:00:00-04:00", 0.6),
+              ("2026-10-20T19:30:00-04:00", 0.3))]
+    h = History()
+    now = time.time()
+    t = now - 37 * 86400
+    while t < now:
+        gain = sum(d for when, d in steps if t >= when)
+        day = math.sin((t % 86400) / 86400 * 2 * math.pi - 1.6)
+        sample = {"cpu": {"percent": max(1, 21 + 9 * day - 3 * gain + rnd.gauss(0, 3))},
+                  "memory": {"percent": 38 + 4 * day - 2.5 * gain + rnd.gauss(0, 1.5)},
+                  "temperature": {"cpu": 61 + 6 * day - 2.8 * gain + rnd.gauss(0, 1.2)},
+                  "disk": {"read_mbs": abs(14 + 6 * day + rnd.gauss(0, 4)), "write_mbs": abs(5 + rnd.gauss(0, 2))}}
+        h.record(sample, ts=t)
+        t += 3600
+    h.close()
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     from so_agent import store
@@ -60,6 +86,7 @@ def main(out):
                                    "profile switches (benchmark unchanged, so low risk)."})
     from so_tray import settings
     settings.save("EXPANDED", "memory,power,storage")
+    seed_history()
     app = QtWidgets.QApplication([])
     from so_tray.app import App
     for theme in ("dark", "light"):
@@ -79,6 +106,12 @@ def main(out):
         loop.exec()
         a.panel.resize(440, 900)
         a.panel.grab().save(os.path.join(out, "feature-%s.png" % theme))
+        a.panel.open_resource("cpu_temp")
+        loop = QtCore.QEventLoop()
+        QtCore.QTimer.singleShot(1500, loop.quit)
+        loop.exec()
+        a.panel.resize(440, 860)
+        a.panel.grab().save(os.path.join(out, "resource-%s.png" % theme))
         a.panel.open_about()
         a.panel.resize(440, 760)
         a.panel.grab().save(os.path.join(out, "about-%s.png" % theme))

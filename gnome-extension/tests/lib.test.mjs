@@ -89,3 +89,13 @@ test('themeFromConfig', () => {
     assert.equal(themeFromConfig('THEME=purple'), 'system');
     assert.equal(themeFromConfig(null), 'system');
 });
+
+test('readout lines open resource pages', async () => {
+    const {readoutResource, RESOURCES} = await import('../system-optimize@bradvrudney.github.io/lib.js');
+    const lines = readoutLines(sample);
+    assert.equal(readoutResource(lines[0]), 'cpu');
+    assert.equal(readoutResource(lines[1]), 'memory');
+    assert.equal(readoutResource(lines[3]), null);
+    assert.equal(readoutResource(undefined), null);
+    assert.deepEqual(RESOURCES.map(r => r[0]), ['cpu', 'memory', 'cpu_temp', 'disk']);
+});
