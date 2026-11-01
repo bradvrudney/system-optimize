@@ -117,6 +117,7 @@ flatpaks() {
 }
 
 @test "flatpak: skipped without flatpak; ok with nothing unused" {
+  hide_cmd flatpak
   run "$SO" -y --only flatpak
   assert_output_contains "flatpak is not installed"
   flatpaks
@@ -220,6 +221,7 @@ wait_online() {
   run env SO_CONTAINER=docker "$SO" -y --force --only firmware
   assert_output_contains "firmware: container"
   rm "$BATS_TEST_TMPDIR/optional/fwupdmgr"
+  hide_cmd fwupdmgr
   run "$SO" -y --only firmware
   assert_output_contains "fwupdmgr is not installed"
 }

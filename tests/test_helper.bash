@@ -34,6 +34,7 @@ setup_sandbox() {
   export STUB_STATE="$BATS_TEST_TMPDIR/stub-state"
   mkdir -p "$STUB_STATE"
   : > "$STUB_LOG"
+  hide_host_tools
   PATH_NO_STUBS="$PATH"
   export PATH="$STUBS:$PATH"
   # Nothing from the caller's environment may leak into the settings.
@@ -190,6 +191,64 @@ with_stub() {
   mkdir -p "$d"
   for n in "$@"; do ln -sfn "$STUBS/optional/$n" "$d/$n"; done
   case ":$PATH:" in *":$d:"*) ;; *) export PATH="$d:$PATH" ;; esac
+}
+
+# _shadow_path BASE NAME...: print PATH with each directory that holds a
+# NAME swapped for BASE-N, a copy made of links to everything else in it.
+_shadow_path() {
+  local base="$1" dir n new="" shadow i=0 hit names
+  shift
+  names="$*"
+  local IFS=:
+  for dir in $PATH; do
+    hit=""
+    for n in "$@"; do [ -e "$dir/$n" ] && hit=1; done
+    if [ -n "$hit" ]; then
+      i=$((i + 1))
+      shadow="$base-$i"
+      rm -rf "$shadow"; mkdir -p "$shadow"
+      for n in "$dir"/* "$dir"/.[!.]*; do
+        [ -e "$n" ] || continue
+        case " $names " in *" ${n##*/} "*) continue ;; esac
+        ln -s "$n" "$shadow/${n##*/}"
+      done
+      dir="$shadow"
+    fi
+    new="${new:+$new:}$dir"
+  done
+  printf '%s\n' "$new"
+}
+
+# hide_cmd NAME...: take NAME off PATH even where the host has it.
+hide_cmd() {
+  PATH=$(_shadow_path "$BATS_TEST_TMPDIR/hidden" "$@")
+  export PATH
+  hash -r
+}
+
+# Host tools the steps look for and the tests bring in as stubs when they
+# want them. CI runners and developer machines may have the real ones
+# (fwupdmgr, flatpak, ccache...), which would change what a step does, so
+# setup hides them. The shadow PATH is built once per run.
+HOST_TOOLS="amd-ttm btrfs flatpak fwupdmgr gsettings iw kreadconfig6 kreadconfig5
+  kscreen-doctor kwriteconfig6 kwriteconfig5 powerprofilesctl rocminfo tuned-adm
+  scx_loader scx_bpfland scx_lavd scx_flash scx_rusty scxctl emerge apk
+  xbps-install xbps-query xbps-remove rc-service rc-update sv dracut ccache
+  plocate updatedb localsearch tracker3 nmcli resolvectl profile-sync-daemon psd
+  ananicy-cpp bpftune lact amdgpu_top llama-bench pmcd psi-notify tlp
+  auto-cpufreq thermald earlyoom nohang system76-power"
+hide_host_tools() {
+  local cache="$BATS_RUN_TMPDIR/host-path" key
+  key="$PATH"
+  if [ -f "$cache" ] && [ "$(head -n 1 "$cache")" = "$key" ]; then
+    PATH=$(sed -n 2p "$cache")
+  else
+    # shellcheck disable=SC2086
+    PATH=$(_shadow_path "$BATS_RUN_TMPDIR/host" $HOST_TOOLS)
+    printf '%s\n%s\n' "$key" "$PATH" > "$cache"
+  fi
+  export PATH
+  hash -r
 }
 
 # gs_put SCHEMA KEY VALUE: a gsettings key (the gsettings stub).
