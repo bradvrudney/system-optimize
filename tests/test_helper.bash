@@ -26,6 +26,10 @@ setup_sandbox() {
   export SO_HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$SO_HOME"
   export NO_COLOR=1
+  # Pin a non-UTF-8 locale so the icons are the ASCII ones whatever the
+  # runner uses (GitHub runners default to C.UTF-8).
+  export LC_ALL=C
+  unset LANG LC_CTYPE
   export STUB_LOG="$BATS_TEST_TMPDIR/calls.log"
   export STUB_STATE="$BATS_TEST_TMPDIR/stub-state"
   mkdir -p "$STUB_STATE"
