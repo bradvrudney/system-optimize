@@ -158,6 +158,25 @@ class PanelTest(unittest.TestCase):
                                   and self.panel.detail_log.item(0, 2) is not None))
         self.assertIn("LLM +1.3%", self.panel.detail_log.item(0, 2).text())
 
+    def test_chat_field_rotates_example_prompts_that_fit(self):
+        from so_tray.model import CHAT_PROMPTS, chat_prompt
+        self.panel.open_chat()
+        self.panel.show()
+        self.wait(lambda: False, timeout=0.2)
+        edit = self.panel.chat_edit
+        first = edit.placeholderText()
+        self.panel._rotate_prompt()
+        self.assertNotEqual(edit.placeholderText(), first)
+        self.assertEqual(self.panel.ask_edit.placeholderText(), edit.placeholderText())
+        edit.setText("my own question")
+        kept = edit.placeholderText()
+        self.panel._rotate_prompt()
+        self.assertEqual(edit.placeholderText(), kept)            # left alone while typing
+        room = edit.width() - 16                                  # frame and text margins
+        fm = edit.fontMetrics()
+        for i in range(len(CHAT_PROMPTS)):
+            self.assertLessEqual(fm.horizontalAdvance(chat_prompt(i)), room, chat_prompt(i))
+
     def test_system_theme_does_not_restyle_in_a_loop(self):
         """setStyleSheet sends PaletteChange; that must not re-apply the theme
         again and again (it once kept the panel busy restyling)."""

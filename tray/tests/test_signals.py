@@ -158,5 +158,24 @@ class CategoryTest(unittest.TestCase):
         self.assertEqual(groups, {"gpu": ["gpu-memory"], "power": ["scheduler"], "memory": ["mglru"]})
 
 
+
+class ChatPromptsTest(unittest.TestCase):
+    def test_twenty_short_prompts_within_the_agents_reach(self):
+        import re
+        from so_tray.cli import CATEGORIES
+        from so_tray.model import CHAT_PROMPTS, chat_prompt
+        self.assertEqual(len(CHAT_PROMPTS), 20)
+        self.assertEqual(len(set(CHAT_PROMPTS)), 20)
+        for p in CHAT_PROMPTS:
+            self.assertLessEqual(len(p), 44, p)
+            self.assertFalse(p.endswith("."), p)
+        # step and profile names it mentions are real ones
+        steps = {s for _, _, names in CATEGORIES for s in names}
+        for name in re.findall(r"the ([a-z][a-z-]*) (?:step|profile)", " ".join(CHAT_PROMPTS)):
+            self.assertIn(name, steps | {"dev", "gaming", "battery", "llm"}, name)
+        self.assertEqual(chat_prompt(0), chat_prompt(20))
+        self.assertTrue(chat_prompt(3).startswith("e.g. "))
+
+
 if __name__ == "__main__":
     unittest.main()
