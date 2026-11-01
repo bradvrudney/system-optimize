@@ -10,7 +10,9 @@
 # is in the rule as well (1.x set it only until the next reboot); removable
 # media are left alone; virtual machines are skipped (virtio disks often
 # claim to be rotational, and the host schedules the real I/O); the values
-# before are recorded for --undo.
+# before are recorded for --undo. Without udev (Alpine with mdev, some
+# containers and minimal systems) the values are set until the next boot
+# and no rule is written.
 
 SO_IO_RULE=/etc/udev/rules.d/60-system-optimize-io.rules
 
@@ -51,6 +53,12 @@ io_disk_target() {
   printf '%s %s\n' "$sched" "$ra"
 }
 
+# io_has_udev: a udev that reads rules from /etc/udev/rules.d (systemd-udev
+# and eudev both ship /etc/udev; BusyBox mdev does not).
+io_has_udev() {
+  [ -d "$(so_path /etc/udev)" ]
+}
+
 tweak_io() {
   local name sched ra cur cur_ra rc=0 changed=0 disks=0 failed=0
   if [ "$SO_IS_VM" = 1 ] || [ "$SO_IN_CONTAINER" = 1 ]; then
@@ -76,6 +84,18 @@ tweak_io() {
     return 0
   fi
 
+  if ! io_has_udev; then
+    if [ "$failed" -gt 0 ]; then
+      step_warn "$failed value(s) could not be set (no udev to keep them either)"
+    elif [ "$changed" = 0 ]; then
+      step_ok "$disks disk(s) already tuned (no udev: nothing keeps them after a reboot)"
+    elif [ "$SO_DRY_RUN" = 1 ]; then
+      step_dry "would change $changed value(s) on $disks disk(s) until the next boot (no udev for a rule)"
+    else
+      step_updated "changed $changed value(s) on $disks disk(s) until the next boot (no udev for a rule)"
+    fi
+    return 0
+  fi
   install_file "$SO_IO_RULE" 0644 < <(io_rule_content) || rc=$?
   [ "$rc" = 0 ] || [ "$rc" = 3 ] || { step_fail "could not write $SO_IO_RULE"; return 1; }
   if [ "$rc" = 0 ] && has_cmd udevadm; then

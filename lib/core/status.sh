@@ -13,6 +13,7 @@ status_main() {
 
   _status_heading "System"
   log_kv "os" "$(sysinfo_describe_os)"
+  log_kv "distribution" "$(os_describe)"
   log_kv "hardware" "$(sysinfo_describe_hw)"
   if [ -n "$SO_CPU_DRIVER" ]; then
     gov=$(read_line "$(so_path /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)" 2>/dev/null) || gov="?"
@@ -26,7 +27,8 @@ status_main() {
     log_kv "power profile" "$prof (tuned)"
   fi
   log_kv "swap" "$SO_SWAP_KIND$([ "$SO_SWAP_KB" -gt 0 ] && printf ', %s' "$(human_mb $((SO_SWAP_KB / 1024)))")"
-  log_kv "package manager" "$SO_PKG_MANAGER"
+  log_kv "package manager" "$SO_PKG_MANAGER$(pkg_can_install || printf ' (--install-tools only recommends here)')"
+  log_kv "init system" "$SO_INIT_SYSTEM"
 
   _status_heading "Settings"
   for line in "$(config_system_file)" "${SO_CONFIG_FILE:-$(config_user_file)}"; do

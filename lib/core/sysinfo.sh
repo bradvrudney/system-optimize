@@ -5,11 +5,10 @@
 # Everything here only reads. Paths go through so_path, so that the tests
 # can point SO_ROOT at a sandbox holding a fake /proc, /sys and /etc.
 # Overrides (tests and odd machines): SO_VIRT (none or a hypervisor name),
-# SO_CONTAINER (none or a container name), SO_PORTABLE (1/0), SO_PKG (dnf,
-# apt, pacman, zypper or none), SO_KERNEL (a release string).
+# SO_CONTAINER (none or a container name), SO_PORTABLE (1/0), SO_KERNEL (a
+# release string). The distribution, package manager and init system are
+# in os.sh.
 
-SO_OS_ID=""
-SO_OS_NAME=""
 SO_MEM_KB=0
 SO_MEM_GB=0
 SO_SWAP_KB=0
@@ -24,8 +23,6 @@ SO_VIRT_NAME="none"
 SO_IN_CONTAINER=0
 SO_CONTAINER_NAME="none"
 SO_IS_PORTABLE=0
-SO_HAS_SYSTEMD=0
-SO_PKG_MANAGER="none"
 
 # so_path PATH: PATH under SO_ROOT.
 so_path() { printf '%s%s\n' "${SO_ROOT:-}" "$1"; }
@@ -37,27 +34,6 @@ read_line() {
   [ -r "$1" ] || return 1
   IFS= read -r line < "$1" || [ -n "$line" ] || return 1
   printf '%s\n' "${line//[^[:print:]]/}"
-}
-
-# os_value KEY [FILE]: the value of KEY in os-release, read line by line
-# (never sourced). /etc/os-release first, /usr/lib/os-release otherwise.
-os_value() {
-  local key="$1" file="${2:-}" line k v
-  if [ -z "$file" ]; then
-    file=$(so_path /etc/os-release)
-    [ -r "$file" ] || file=$(so_path /usr/lib/os-release)
-  fi
-  [ -r "$file" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    [[ "$line" =~ ^[[:space:]]*([A-Z0-9_]+)=(.*)$ ]] || continue
-    k="${BASH_REMATCH[1]}"
-    v="${BASH_REMATCH[2]}"
-    [ "$k" = "$key" ] || continue
-    if [[ "$v" =~ ^\"(.*)\"$ ]] || [[ "$v" =~ ^\'(.*)\'$ ]]; then v="${BASH_REMATCH[1]}"; fi
-    printf '%s\n' "${v//[^[:print:]]/}"
-    return 0
-  done < "$file"
-  return 1
 }
 
 # meminfo_kb FIELD: a /proc/meminfo field in kB.
@@ -173,21 +149,9 @@ portable_scan() {
   esac
 }
 
-# pkg_scan: the package manager used by --install-tools.
-pkg_scan() {
-  if [ -n "${SO_PKG:-}" ]; then SO_PKG_MANAGER="$SO_PKG"; return 0; fi
-  if has_cmd dnf; then SO_PKG_MANAGER=dnf
-  elif has_cmd apt-get; then SO_PKG_MANAGER=apt
-  elif has_cmd pacman; then SO_PKG_MANAGER=pacman
-  elif has_cmd zypper; then SO_PKG_MANAGER=zypper
-  else SO_PKG_MANAGER=none
-  fi
-}
-
 # sysinfo_detect: run every probe once.
 sysinfo_detect() {
-  SO_OS_ID=$(os_value ID) || SO_OS_ID=""
-  SO_OS_NAME=$(os_value PRETTY_NAME) || SO_OS_NAME=""
+  os_detect
   SO_MEM_KB=$(meminfo_kb MemTotal) || SO_MEM_KB=0
   [[ "$SO_MEM_KB" =~ ^[0-9]+$ ]] || SO_MEM_KB=0
   # Rounded up to whole GiB, and above 4 GiB to an even number: MemTotal
@@ -201,8 +165,6 @@ sysinfo_detect() {
   SO_KERNEL_RELEASE="${SO_KERNEL:-$(uname -r 2>/dev/null || echo unknown)}"
   virt_scan
   portable_scan
-  if [ -d "$(so_path /run/systemd/system)" ]; then SO_HAS_SYSTEMD=1; else SO_HAS_SYSTEMD=0; fi
-  pkg_scan
 }
 
 # sysinfo_describe_os: one line for headers and the log.
@@ -317,51 +279,4 @@ unit_enabled_state() {
   s=$(run systemctl is-enabled "$1" 2>/dev/null) || true
   s="${s%%$'\n'*}"
   printf '%s\n' "${s:-absent}"
-}
-
-# ---------------------------------------------------------------------------
-# Packages (for --install-tools and --undo)
-# ---------------------------------------------------------------------------
-# pkg_installed NAME
-pkg_installed() {
-  case "$SO_PKG_MANAGER" in
-    dnf|zypper) run rpm -q --quiet "$1" >/dev/null 2>&1 ;;
-    apt) [ "$(run dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ] ;;
-    pacman) run pacman -Q "$1" >/dev/null 2>&1 ;;
-    *) return 1 ;;
-  esac
-}
-
-# pkg_install NAME / pkg_remove NAME: through the package manager, with the
-# package timeout. They change the system: callers check SO_DRY_RUN first.
-pkg_install() {
-  local -a cmd
-  case "$SO_PKG_MANAGER" in
-    dnf) cmd=(dnf install -y "$1") ;;
-    apt) cmd=(env DEBIAN_FRONTEND=noninteractive apt-get install -y "$1") ;;
-    pacman) cmd=(pacman -S --noconfirm --needed "$1") ;;
-    zypper) cmd=(zypper --non-interactive install "$1") ;;
-    *) log_error "no supported package manager (dnf, apt, pacman, zypper)"; return 1 ;;
-  esac
-  SO_RUN_TIMEOUT="$SO_PKG_TIMEOUT" run "${cmd[@]}"
-}
-
-pkg_remove() {
-  local -a cmd
-  case "$SO_PKG_MANAGER" in
-    dnf) cmd=(dnf remove -y "$1") ;;
-    apt) cmd=(env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$1") ;;
-    pacman) cmd=(pacman -R --noconfirm "$1") ;;
-    zypper) cmd=(zypper --non-interactive remove "$1") ;;
-    *) log_error "no supported package manager (dnf, apt, pacman, zypper)"; return 1 ;;
-  esac
-  SO_RUN_TIMEOUT="$SO_PKG_TIMEOUT" run "${cmd[@]}"
-}
-
-# pkg_name TOOL: the package that provides TOOL on this distribution.
-pkg_name() {
-  case "$1:$SO_PKG_MANAGER" in
-    zram-generator:apt) echo systemd-zram-generator ;;
-    *) echo "$1" ;;
-  esac
 }

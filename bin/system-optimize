@@ -20,11 +20,11 @@ if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] ||
   exit 1
 fi
 
-# The core relies on a few external commands (coreutils, grep, sed); say
-# which one is missing up front instead of failing inside a step.
-for _so_cmd in mktemp readlink grep sed sort cmp; do
+# The core relies on a few external commands (coreutils or BusyBox, grep,
+# sed); say which one is missing up front instead of failing inside a step.
+for _so_cmd in mktemp readlink grep sed sort; do
   if ! command -v "$_so_cmd" >/dev/null 2>&1; then
-    echo "system-optimize needs '$_so_cmd' on PATH (GNU coreutils, diffutils, grep and sed are required)" >&2
+    echo "system-optimize needs '$_so_cmd' on PATH (coreutils or BusyBox, grep and sed are required)" >&2
     exit 1
   fi
 done
@@ -66,6 +66,8 @@ source "$SO_ROOT_DIR/lib/core/config.sh"
 source "$SO_ROOT_DIR/lib/core/args.sh"
 # shellcheck source=lib/core/sysinfo.sh
 source "$SO_ROOT_DIR/lib/core/sysinfo.sh"
+# shellcheck source=lib/core/os.sh
+source "$SO_ROOT_DIR/lib/core/os.sh"
 # shellcheck source=lib/core/runner.sh
 source "$SO_ROOT_DIR/lib/core/runner.sh"
 # shellcheck source=lib/core/runlog.sh

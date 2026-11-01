@@ -41,7 +41,7 @@ setup_sandbox() {
     SELF_UPDATE_REPO SELF_UPDATE_BRANCH TIMEOUT PKG_TIMEOUT DOWNLOAD_TIMEOUT ONLY SKIP \
     INSTALL_TOOLS FORCE SNAPSHOT_DIR COLOR LOGGING LOG_DIR LOG_KEEP \
     XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME SYSTEM_OPTIMIZE_ALLOW_FILE_SOURCE \
-    STUB_ACTIVE STUB_UNITS STUB_RPM_INSTALLED 2>/dev/null || true
+    STUB_ACTIVE STUB_UNITS STUB_RPM_INSTALLED STUB_PKG_INSTALLED SO_INIT 2>/dev/null || true
   export SO_SYSTEM_CONFIG="$SANDBOX/etc/system-optimize.conf"
   export SO_SKIP_ROOT_CHECK=1
   export SO_VIRT=none SO_CONTAINER=none SO_PKG=dnf SO_KERNEL=6.17.0-test
@@ -351,7 +351,7 @@ load_so() {
   SO_ROOT_DIR="$REPO_ROOT"
   set +u
   local f
-  for f in log util config args sysinfo runner runlog snapshot selfupdate status; do
+  for f in log util config args sysinfo os runner runlog snapshot selfupdate status; do
     # shellcheck disable=SC1090
     source "$REPO_ROOT/lib/core/$f.sh"
   done

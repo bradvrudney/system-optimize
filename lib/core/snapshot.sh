@@ -11,6 +11,8 @@
 #                sysctl  KEY      the value before
 #                sysfs   PATH     the value before
 #                unit    UNIT     enabled | disabled | ... (the state before)
+#                svc     INIT:NAME  enabled | disabled  (an OpenRC or runit
+#                                 service; INIT is openrc or runit)
 #                ppd     -        the power-profiles-daemon profile before
 #                tuned   -        the tuned profile before
 #                pkg     NAME     installed   (installed by this run)
@@ -96,7 +98,12 @@ file_differs() {
   local real
   real=$(so_path "$1")
   [ -f "$real" ] || return 0
-  ! cmp -s -- "$real" "$2"
+  if has_cmd cmp; then
+    ! cmp -s -- "$real" "$2"
+  else
+    # Minimal containers ship without diffutils.
+    [ "$(sha256_of "$real")" != "$(sha256_of "$2")" ]
+  fi
 }
 
 # install_file PATH MODE < CONTENT: put CONTENT at PATH (a system path).
@@ -174,6 +181,54 @@ unit_set() {
   run systemctl "$action" --now "$unit"
 }
 
+# svc_set NAME enable|disable: enable and start, or stop and disable, a
+# service by its base name with whichever init runs, recording its state
+# before. systemd goes through unit_set; OpenRC uses rc-update and
+# rc-service (default runlevel); runit links /etc/sv/NAME into the service
+# directory, which runsvdir starts within seconds.
+svc_set() {
+  local name="$1" action="$2" prev
+  case "$SO_INIT_SYSTEM" in
+    systemd) unit_set "$name.service" "$action"; return ;;
+    openrc|runit) ;;
+    *) log_warn "$name: no init system to $action it with"; return 1 ;;
+  esac
+  prev=$(svc_enabled_state "$name")
+  if [ "$prev" = absent ]; then
+    log_warn "$name: no $SO_INIT_SYSTEM service of that name"
+    return 1
+  fi
+  if [ "$SO_DRY_RUN" = 1 ]; then
+    log_dry "would $action the $SO_INIT_SYSTEM service $name"
+    return 0
+  fi
+  snap_record svc "$SO_INIT_SYSTEM:$name" "$prev" || return 1
+  _svc_apply "$SO_INIT_SYSTEM" "$name" "$action"
+}
+
+# _svc_apply INIT NAME enable|disable: the change itself (also for --undo).
+_svc_apply() {
+  local init="$1" name="$2" action="$3" dir
+  case "$init:$action" in
+    openrc:enable)
+      do_run rc-update add "$name" default || return 1
+      do_run rc-service "$name" start ;;
+    openrc:disable)
+      do_run rc-service "$name" stop || true
+      do_run rc-update del "$name" default ;;
+    runit:enable)
+      dir=$(svc_runit_dir)
+      [ -e "$(so_path "$dir/$name")" ] && return 0
+      do_run ln -s "/etc/sv/$name" "$(so_path "$dir/$name")" ;;
+    runit:disable)
+      dir=$(svc_runit_dir)
+      [ -L "$(so_path "$dir/$name")" ] || return 0
+      has_cmd sv && { do_run sv down "$name" || true; }
+      do_run rm -f -- "$(so_path "$dir/$name")" ;;
+    *) return 1 ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Listing and restoring
 # ---------------------------------------------------------------------------
@@ -235,6 +290,7 @@ _undo_valid() {
       [[ "$target" =~ ^/sys/[A-Za-z0-9_./:-]+$ ]] && [[ "$target" != *..* ]] &&
         [[ "$value" =~ ^[A-Za-z0-9_.-]*$ ]] ;;
     unit) [[ "$target" =~ ^[A-Za-z0-9@._-]+$ ]] && [[ "$value" =~ ^[a-z-]+$ ]] ;;
+    svc) [[ "$target" =~ ^(openrc|runit):[A-Za-z0-9@._-]+$ ]] && [[ "$value" =~ ^(enabled|disabled)$ ]] ;;
     ppd|tuned) [[ "$value" =~ ^[A-Za-z0-9_.-]*$ ]] ;;
     pkg) [[ "$target" =~ ^[A-Za-z0-9+._-]+$ ]] ;;
     *) return 1 ;;
@@ -282,6 +338,12 @@ _undo_entry() {
         masked) do_run systemctl mask --now "$target" ;;
         *) log_detail "$target was $value before; left as it is" ;;
       esac ;;
+    svc)
+      if [ "$value" = enabled ]; then
+        _svc_apply "${target%%:*}" "${target#*:}" enable
+      else
+        _svc_apply "${target%%:*}" "${target#*:}" disable
+      fi ;;
     ppd) [ -n "$value" ] && do_run powerprofilesctl set "$value" ;;
     tuned)
       if [ -z "$value" ] || [ "$value" = none ]; then do_run tuned-adm off; else do_run tuned-adm profile "$value"; fi ;;

@@ -4,10 +4,13 @@
 #
 #   tests/install-smoke.sh
 #
-# CI runs this inside stock Fedora, Debian, Ubuntu, Arch and openSUSE
-# containers; it works on any Linux machine with bash 4.4, coreutils, tar
-# and curl. install.sh writes only into a temporary prefix (SO_SUDO empty:
-# it never escalates).
+# CI runs this inside the stock containers system-update is tested on
+# (Ubuntu, Debian, Fedora, Rocky, Arch, openSUSE Tumbleweed and Leap,
+# Alpine); tests/containers.sh does the same locally with docker. It works
+# on any Linux machine with bash 4.4, tar, curl and coreutils or BusyBox.
+# SO_EXPECT_PKG=NAME also checks the package manager --status detects.
+# install.sh writes only into a temporary prefix (SO_SUDO empty: it never
+# escalates).
 #
 # What it checks:
 #   1. install.sh --prefix DIR installs the single file and the bash
@@ -77,6 +80,10 @@ expect "complete -F _system_optimize" "$so" --completion bash
 echo "== --status and --dry-run on this machine"
 expect "Kernel settings" "$so" --status
 cat "$tmp/last.out"
+if [ -n "${SO_EXPECT_PKG:-}" ]; then
+  grep -Eq "package manager: +$SO_EXPECT_PKG( |\$)" "$tmp/last.out" ||
+    fail "--status did not detect the package manager $SO_EXPECT_PKG"
+fi
 expect "Summary (dry run)" "$so" --dry-run --yes
 cat "$tmp/last.out"
 grep -q ' 0 failed' "$tmp/last.out" || fail "the dry run reported a failed step"
@@ -98,7 +105,10 @@ if in_container && [ "$(id -u)" -eq 0 ]; then
     expect "restored " "$so" --undo --yes
     cat "$tmp/last.out"
     (cd /etc && find . -xdev -type f -exec md5sum {} + 2>/dev/null | LC_ALL=C sort -k2) > "$tmp/etc.sum.after"
-    diff "$tmp/etc.sum.before" "$tmp/etc.sum.after" || fail "--undo did not restore /etc"
+    if [ "$(cat "$tmp/etc.sum.before")" != "$(cat "$tmp/etc.sum.after")" ]; then
+      diff "$tmp/etc.sum.before" "$tmp/etc.sum.after" 2>/dev/null || true
+      fail "--undo did not restore /etc"
+    fi
   else
     echo "(nothing to change in this container)"
   fi
@@ -114,7 +124,7 @@ export SYSTEM_OPTIMIZE_ALLOW_FILE_SOURCE=1 SELF_UPDATE_REPO="file://$tmp/rel"
 expect "already up to date: system-optimize $version" "$so" --self-update --dry-run
 rm "$rel/system-optimize.sha256"
 expect_fail "refusing an unverified update" "$so" --self-update
-cmp -s "$so" "$rel/system-optimize" || fail "the single file was changed"
+[ "$(sha256sum < "$so")" = "$(sha256sum < "$rel/system-optimize")" ] || fail "the single file was changed"
 unset SYSTEM_OPTIMIZE_ALLOW_FILE_SOURCE SELF_UPDATE_REPO
 
 # ---- 5. the tree layout, back to the single file, uninstall

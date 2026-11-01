@@ -21,6 +21,14 @@
 #
 # Reported only (no install): power-profiles-daemon, tuned, tuned-ppd, TLP,
 # auto-cpufreq and thermald. See docs/tools.md for the wider survey.
+#
+# Services are handled for systemd, OpenRC (Alpine, Gentoo) and runit
+# (Void) alike; systemd-oomd and zram-generator are systemd's own, so on
+# the others earlyoom is the OOM helper and zram is left to the owner.
+# Packages are installed with apt, dnf, zypper, pacman, apk or xbps; on
+# rpm-ostree, Gentoo and NixOS the step says what to install by hand.
+# earlyoom comes from EPEL on RHEL-family systems: when EPEL is not
+# enabled the step says so instead of failing.
 
 SO_ZRAM_CONF=/etc/systemd/zram-generator.conf
 SO_TOOL_RECS=()        # "id<TAB>why"
@@ -31,13 +39,13 @@ tools_scan() {
   local ppd=0 tuned=0 tlp=0 acf=0 oomd=0 eoom=0
   SO_TOOL_RECS=()
   SO_TOOL_CONFLICTS=()
-  unit_active power-profiles-daemon.service && ppd=1
-  unit_active tuned-ppd.service && ppd=1
-  unit_active tuned.service && tuned=1
-  unit_active tlp.service && tlp=1
-  unit_active auto-cpufreq.service && acf=1
-  unit_active systemd-oomd.service && oomd=1
-  { unit_active earlyoom.service || unit_active nohang.service || unit_active nohang-desktop.service; } && eoom=1
+  svc_active power-profiles-daemon && ppd=1
+  svc_active tuned-ppd && ppd=1
+  svc_active tuned && tuned=1
+  svc_active tlp && tlp=1
+  svc_active auto-cpufreq && acf=1
+  svc_active systemd-oomd && oomd=1
+  { svc_active earlyoom || svc_active nohang || svc_active nohang-desktop; } && eoom=1
 
   if [ "$tlp" = 1 ] && { [ "$ppd" = 1 ] || [ "$tuned" = 1 ]; }; then
     SO_TOOL_CONFLICTS+=("TLP and power-profiles-daemon/tuned are both running; they overwrite each other's settings (keep one)")
@@ -49,19 +57,23 @@ tools_scan() {
     SO_TOOL_CONFLICTS+=("systemd-oomd and earlyoom/nohang are both running; one OOM daemon is enough")
   fi
 
-  [ "$SO_HAS_SYSTEMD" = 1 ] || return 0
+  [ "$SO_INIT_SYSTEM" != none ] || return 0
   if [ "$oomd" = 0 ] && [ "$eoom" = 0 ]; then
-    if unit_exists systemd-oomd.service; then
+    if svc_exists systemd-oomd; then
       SO_TOOL_RECS+=($'oomd\tenable systemd-oomd: ends runaway memory use before the desktop freezes')
     else
       SO_TOOL_RECS+=($'earlyoom\tinstall earlyoom: ends runaway memory use before the desktop freezes')
     fi
   fi
-  if [ "$SO_IS_VM" = 0 ] && [ "$SO_IN_CONTAINER" = 0 ] && [ "$SO_CPUS" -gt 1 ] && ! unit_active irqbalance.service; then
+  if [ "$SO_IS_VM" = 0 ] && [ "$SO_IN_CONTAINER" = 0 ] && [ "$SO_CPUS" -gt 1 ] && ! svc_active irqbalance; then
     SO_TOOL_RECS+=($'irqbalance\tinstall irqbalance: spreads hardware interrupts over the CPUs')
   fi
   if [ "$SO_SWAP_KIND" = none ] && [ "$SO_IN_CONTAINER" = 0 ]; then
-    SO_TOOL_RECS+=($'zram\tinstall zram-generator: compressed swap in RAM instead of none')
+    if [ "$SO_INIT_SYSTEM" = systemd ]; then
+      SO_TOOL_RECS+=($'zram\tinstall zram-generator: compressed swap in RAM instead of none')
+    else
+      log_detail "no swap: a compressed swap in RAM (zram-init on OpenRC, zramen on Void) would help; not set up automatically"
+    fi
   fi
 }
 
@@ -72,25 +84,34 @@ tools_report() {
               auto-cpufreq:auto-cpufreq thermald:thermald systemd-oomd:systemd-oomd earlyoom:earlyoom \
               nohang:nohang irqbalance:irqbalance; do
     label="${unit#*:}"
-    if unit_active "${unit%%:*}.service"; then
+    if svc_active "${unit%%:*}"; then
       log_kv "$label" "running"
-    elif unit_exists "${unit%%:*}.service"; then
+    elif svc_exists "${unit%%:*}"; then
       log_kv "$label" "installed, not running"
     fi
   done
-  if unit_exists fstrim.timer; then log_kv "fstrim.timer" "$(unit_enabled_state fstrim.timer)"; fi
+  if unit_exists fstrim.timer; then log_kv "fstrim.timer" "$(unit_enabled_state fstrim.timer)"
+  elif trim_cron_file >/dev/null; then log_kv "weekly fstrim" "$(trim_cron_state)"
+  fi
 }
 
-# _tools_pkg_unit TOOL UNIT: install TOOL's package (when missing) and
-# enable UNIT.
-_tools_pkg_unit() {
-  local pkg
+# _tools_pkg_svc TOOL SERVICE: install TOOL's package (when missing) and
+# enable SERVICE (a base name). Returns 2 when it has to be done by hand.
+_tools_pkg_svc() {
+  local pkg repo
   pkg=$(pkg_name "$1")
-  if [ "$SO_PKG_MANAGER" = none ]; then
-    log_warn "$1: no supported package manager; install it by hand"
-    return 1
+  if ! pkg_can_install; then
+    if pkg_installed "$pkg" 2>/dev/null || svc_exists "${2:-$1}"; then
+      :
+    else
+      log_warn "$1: $(pkg_hand_hint "$pkg")"
+      return 2
+    fi
+  elif ! pkg_installed "$pkg" && repo=$(pkg_needs_repo "$1"); then
+    log_warn "$1 comes from $repo, which is not enabled; enable it and run again"
+    return 2
   fi
-  if ! pkg_installed "$pkg"; then
+  if pkg_can_install && ! pkg_installed "$pkg"; then
     if [ "$SO_DRY_RUN" = 1 ]; then
       log_dry "would install the package $pkg ($SO_PKG_MANAGER)"
     else
@@ -99,13 +120,13 @@ _tools_pkg_unit() {
     fi
   fi
   [ -n "${2:-}" ] || return 0
-  unit_set "$2" enable
+  svc_set "$2" enable
 }
 
 # _tools_zram: zram-generator with a config, then start the swap now.
 _tools_zram() {
   local rc=0
-  _tools_pkg_unit zram-generator "" || return 1
+  _tools_pkg_svc zram-generator "" || return
   if [ ! -e "$(so_path "$SO_ZRAM_CONF")" ]; then
     install_file "$SO_ZRAM_CONF" 0644 < <(printf '%s\n' "# Written by system-optimize. Undo: system-optimize --undo" \
       "[zram0]" "zram-size = min(ram / 2, 8192)" "compression-algorithm = zstd") || rc=$?
@@ -116,7 +137,7 @@ _tools_zram() {
 }
 
 tweak_tools() {
-  local line id why n=0 failed=0
+  local line id why n=0 failed=0 manual=0 rc
   local -a ids=()
   tools_scan
   for line in "${SO_TOOL_CONFLICTS[@]+"${SO_TOOL_CONFLICTS[@]}"}"; do
@@ -129,22 +150,36 @@ tweak_tools() {
   done
 
   if [ ${#ids[@]} -gt 0 ] && cfg_bool INSTALL_TOOLS; then
+    local -a done_ids=()
     for id in "${ids[@]}"; do
+      rc=0
       case "$id" in
-        oomd) unit_set systemd-oomd.service enable ;;
-        earlyoom) _tools_pkg_unit earlyoom earlyoom.service ;;
-        irqbalance) _tools_pkg_unit irqbalance irqbalance.service ;;
+        oomd) svc_set systemd-oomd enable ;;
+        earlyoom) _tools_pkg_svc earlyoom earlyoom ;;
+        irqbalance) _tools_pkg_svc irqbalance irqbalance ;;
         zram) _tools_zram ;;
-      esac && n=$((n + 1)) || failed=$((failed + 1))
+      esac || rc=$?
+      case "$rc" in
+        0) n=$((n + 1)); done_ids+=("$id") ;;
+        2) manual=$((manual + 1)) ;;
+        *) failed=$((failed + 1)) ;;
+      esac
     done
     if [ "$failed" -gt 0 ]; then
       step_fail "$failed of ${#ids[@]} helper(s) could not be set up"
       return 1
     fi
+    if [ "$n" = 0 ]; then
+      step_warn "$manual helper(s) to set up by hand (see above)"
+      return 0
+    fi
+    ids=("${done_ids[@]}")
+    local extra=""
+    [ "$manual" -gt 0 ] && extra="; $manual by hand (see above)"
     if [ "$SO_DRY_RUN" = 1 ]; then
-      step_dry "would set up: $(join_by ', ' "${ids[@]}")"
+      step_dry "would set up: $(join_by ', ' "${ids[@]}")$extra"
     else
-      step_updated "set up: $(join_by ', ' "${ids[@]}")"
+      step_updated "set up: $(join_by ', ' "${ids[@]}")$extra"
     fi
     return 0
   fi
