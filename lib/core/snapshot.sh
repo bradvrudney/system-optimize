@@ -475,6 +475,21 @@ _tuned_without() {
   printf '%s\n' "$out"
 }
 
+# _undo_restart_for PATH: what to restart (or daemon-reload) after PATH is
+# restored, for services that read their configuration only at start.
+_undo_restart_for() {
+  [ "$SO_HAS_SYSTEMD" = 1 ] || return 0
+  case "$1" in
+    /etc/systemd/system/*) echo daemon-reload ;;
+    /etc/tuned/ppd.conf) echo tuned-ppd.service ;;
+    /etc/tuned/*) echo tuned.service ;;
+    /etc/systemd/resolved.conf.d/*) echo systemd-resolved.service ;;
+    /etc/systemd/journald.conf.d/*) echo systemd-journald.service ;;
+    /etc/NetworkManager/conf.d/*) echo NetworkManager.service ;;
+    /etc/scx_loader/*) echo scx_loader.service ;;
+  esac
+}
+
 # _undo_entry SNAPDIR KIND TARGET VALUE: put one thing back.
 _undo_entry() {
   local dir="$1" kind="$2" target="$3" value="$4" real user rest cur
@@ -529,10 +544,14 @@ _undo_entry() {
       fi ;;
     ppd) [ -n "$value" ] && do_run powerprofilesctl set "$value" ;;
     tuned)
-      # Profiles added since (system-optimize's own) are kept on top.
+      # system-optimize's own profile, when another record added it, stays
+      # on top; the record that added it (AFTER has it) takes it away.
       cur=$(tuned_active_profile 2>/dev/null) || cur=""
       rest=""
-      [[ " $cur " == *" system-optimize "* ]] && [[ " $value " != *" system-optimize "* ]] && rest=" system-optimize"
+      if [[ " $cur " == *" system-optimize "* ]] && [[ " $value " != *" system-optimize "* ]] \
+        && [[ " ${SO_UNDO_AFTER-} " != *" system-optimize "* ]]; then
+        rest=" system-optimize"
+      fi
       if [ -z "$value" ] || [ "$value" = none ]; then
         if [ -n "$rest" ]; then do_run tuned-adm profile system-optimize; else do_run tuned-adm off; fi
       else
@@ -579,10 +598,11 @@ _kconfig_write() {
 SO_UNDO_ITEMS=()   # "ID:LINE" pairs, in the order to undo them
 SO_UNDO_DONE=()    # "ID:LINE:TIME" pairs undone by this run (for the history)
 SO_UNDO_INITRAMFS=0
+SO_UNDO_AFTER=""      # the record being undone: its AFTER value
 
 # undo_items_step: undo SO_UNDO_ITEMS (set by undo_main or undo_steps_main).
 undo_items_step() {
-  local item id n dir kind target value step failed=0 count=0 udev=0 now id_seen=" "
+  local item id n dir kind target value step failed=0 count=0 udev=0 now id_seen=" " restarts=" " u
   local -a lines=()
   for item in "${SO_UNDO_ITEMS[@]}"; do
     id="${item%%:*}"; n="${item##*:}"
@@ -590,6 +610,7 @@ undo_items_step() {
     mapfile -t lines < "$dir/manifest"
     tsv_split "${lines[n - 1]}"
     kind="${SO_F[0]}"; target="${SO_F[1]-}"; value="${SO_F[2]-}"; step="${SO_F[3]:--}"
+    SO_UNDO_AFTER="${SO_F[4]-}"
     [ -n "$kind" ] || continue
     count=$((count + 1))
     if ! _undo_valid "$kind" "$target" "$value" "${step:--}"; then
@@ -598,6 +619,10 @@ undo_items_step() {
       continue
     fi
     [ "$kind" = file ] && [[ "$target" == /etc/udev/* ]] && udev=1
+    if [ "$kind" = file ]; then
+      u=$(_undo_restart_for "$target")
+      [ -z "$u" ] || [[ "$restarts" == *" $u "* ]] || restarts+="$u "
+    fi
     if _undo_entry "$dir" "$kind" "$target" "$value"; then
       if [ "$SO_DRY_RUN" != 1 ]; then
         now=$(iso_now)
@@ -608,6 +633,12 @@ undo_items_step() {
       failed=$((failed + 1))
     fi
     [[ "$id_seen" == *" $id "* ]] || id_seen+="$id "
+  done
+  # Services that read a restored file only when they start.
+  for u in $restarts; do
+    if [ "$u" = daemon-reload ]; then do_run systemctl daemon-reload || true
+    elif unit_active "$u"; then do_run systemctl try-restart "$u" || true
+    fi
   done
   if [ "$udev" = 1 ] && has_cmd udevadm; then
     do_run udevadm control --reload-rules || true
