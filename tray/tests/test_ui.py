@@ -158,6 +158,16 @@ class PanelTest(unittest.TestCase):
                                   and self.panel.detail_log.item(0, 2) is not None))
         self.assertIn("LLM +1.3%", self.panel.detail_log.item(0, 2).text())
 
+    def test_system_theme_does_not_restyle_in_a_loop(self):
+        """setStyleSheet sends PaletteChange; that must not re-apply the theme
+        again and again (it once kept the panel busy restyling)."""
+        calls = []
+        real = self.panel.apply_theme
+        self.panel.apply_theme = lambda *a: (calls.append(1), real(*a))
+        self.panel.apply_theme("system")
+        self.wait(lambda: False, timeout=0.5)
+        self.assertLessEqual(len(calls), 2, len(calls))
+
     def test_theme_switches_live_and_is_saved(self):
         from so_tray import settings
         self.panel.apply_theme("light")

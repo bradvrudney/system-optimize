@@ -75,12 +75,21 @@ Fedora (RPM) and Debian or Ubuntu (deb) packages are built by CI from
   `gnome-extensions enable system-optimize@bradvrudney.github.io` and log out and in)
 - `system-optimize-agent`: the optional tuning agent
 
-From a checkout:
+From a checkout, as yourself (system parts go through sudo):
 
 ```
-sudo make -C tray install            # everything
-sudo make -C tray install-tray       # or one part: install-extension, install-agent
+tray/install.sh                      # the tray, plus the GNOME extension on GNOME
+tray/install.sh --all                # tray, extension, Performance Co-Pilot and the agent
+tray/install.sh --agent --model qwen3:8b --schedule "0 3 * * *"
+tray/install.sh --uninstall --agent --remove-model
+tray/install.sh --all --dry-run      # print the plan, change nothing
 ```
+
+The parts are `--tray`, `--extension`, `--monitoring` (Performance Co-Pilot,
+for long resource history) and `--agent`. Each system part is also a make
+target (`sudo make -C tray install-tray`, `install-extension`, `install-agent`
+and their `uninstall-*` twins). `--uninstall --monitoring` removes only the
+packages the script installed.
 
 It needs Python 3 and either PySide6 or PyQt6 (`sudo dnf install
 python3-pyside6` on Fedora). The extension's menu needs only Python; the

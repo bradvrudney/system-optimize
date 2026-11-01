@@ -203,7 +203,9 @@ class Panel(QtWidgets.QWidget):
                 settings_mod.save("THEME", setting)
             except OSError:
                 pass
-        self.c.update(colors(resolve(self.settings["THEME"])))
+        mode = resolve(self.settings["THEME"])
+        self._applied_mode = mode
+        self.c.update(colors(mode))
         self.setStyleSheet(stylesheet(self.c))
         for a in self.theme_actions:
             a.setChecked(a.data() == self.settings["THEME"])
@@ -212,7 +214,10 @@ class Panel(QtWidgets.QWidget):
             w.update()
 
     def changeEvent(self, e):
-        if e.type() == QtCore.QEvent.Type.PaletteChange and self.settings["THEME"] == "system":
+        # Our own setStyleSheet also sends PaletteChange: re-apply only when the
+        # desktop really switched between light and dark, or this loops forever.
+        if (e.type() == QtCore.QEvent.Type.PaletteChange and self.settings["THEME"] == "system"
+                and resolve("system") != getattr(self, "_applied_mode", None)):
             QtCore.QTimer.singleShot(0, self.apply_theme)
         super().changeEvent(e)
 

@@ -54,14 +54,16 @@ TITLES = {
     "scheduler": ("CPU scheduler", "an optional sched_ext (scx) scheduler through scx_loader"),
 }
 CATEGORIES = [   # (key, title, steps); the CLI's "category" field wins when it sends one
-    ("power", "Power and CPU", ("cpu", "tuned", "battery", "responsive", "scheduler", "scx")),
+    ("power", "Power and CPU", ("cpu", "tuned", "battery", "charge", "powerswitch", "responsive", "scheduler",
+                                "scx")),
     ("memory", "Memory", ("sysctl", "limits", "llm", "mglru", "thp")),
-    ("gpu", "GPU and AI", ("gpu-memory", "gpu", "ttm")),
-    ("storage", "Storage", ("io", "trim", "disk", "btrfs", "indexing", "caching")),
-    ("network", "Network", ("network",)),
+    ("gpu", "GPU and AI", ("gpu-memory", "gpu", "ttm", "rocm")),
+    ("storage", "Storage", ("io", "trim", "disk", "noatime", "btrfs", "indexing", "indexer", "plocate", "caching",
+                            "psd", "pkgmgr", "ccache")),
+    ("network", "Network", ("network", "dns", "wifi")),
     ("display", "Display and fonts", ("display", "fonts", "desktop")),
-    ("boot", "Boot and cleanup", ("boot", "cleanup")),
-    ("helpers", "Helpers and checks", ("tools", "drift")),
+    ("boot", "Boot and cleanup", ("boot", "waitonline", "cleanup", "journal", "flatpak")),
+    ("helpers", "Helpers and checks", ("tools", "drift", "driftwatch", "firmware")),
 ]
 HIDDEN = {"legacy"}
 
@@ -164,6 +166,12 @@ def parse_status_json(text):
                                   item.get("title") if isinstance(item.get("title"), str) else None,
                                   item.get("summary") if isinstance(item.get("summary"), str) else None,
                                   item.get("category")))
+    # top-level "categories": [{id, title}] names the categories the steps use
+    titles = {c["id"]: c["title"] for c in data.get("categories") or []
+              if isinstance(c, dict) and isinstance(c.get("id"), str) and isinstance(c.get("title"), str)}
+    for f in feats:
+        if f["category"] in titles:
+            f["category_title"] = titles[f["category"]][:60]
     caps = {c for c in (data.get("capabilities") or []) if isinstance(c, str)}
     profiles = [p for p in (data.get("profiles") or []) if isinstance(p, str) and NAME_RE.match(p)]
     snaps = []

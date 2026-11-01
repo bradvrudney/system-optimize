@@ -143,6 +143,14 @@ class LlmBenchTest(unittest.TestCase):
 
 
 class CategoryTest(unittest.TestCase):
+    def test_cli_category_ids_and_titles(self):
+        info = parse_status_json(
+            '{"steps": [{"name": "gpu-memory", "category": "gpu"}, {"name": "journal", "category": "boot"},'
+            ' {"name": "wifi"}], "categories": [{"id": "gpu", "title": "GPU and local AI"}, {"id": 3}]}')
+        got = {f["name"]: (f["category"], f["category_title"]) for f in info["features"]}
+        self.assertEqual(got, {"gpu-memory": ("gpu", "GPU and local AI"), "journal": ("boot", "Boot and cleanup"),
+                               "wifi": ("network", "Network")})
+
     def test_new_steps_fall_back_to_their_categories(self):
         info = {"features": [_feature(n, "default") for n in ("gpu-memory", "scheduler", "mglru")],
                 "capabilities": []}
