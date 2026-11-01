@@ -19,15 +19,19 @@ setup() {
   export SO_INSTALL_PROGRAM="$BATS_TEST_TMPDIR/fake-program"
   printf '#!/bin/sh\necho "program $*" >> "%s"\n' "$STUB_LOG" > "$SO_INSTALL_PROGRAM"
   chmod +x "$SO_INSTALL_PROGRAM"
+  # The installer runs from a copy of the checkout without tray/, so the
+  # tests behave the same once the tray app is merged and never run its
+  # real installer (fake_tray adds a logging one).
+  CHECKOUT="$BATS_TEST_TMPDIR/checkout"
+  mkdir -p "$CHECKOUT"
+  cp -a "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/docs "$REPO_ROOT"/completions \
+    "$REPO_ROOT"/install.sh "$REPO_ROOT"/build.sh "$REPO_ROOT"/VERSION "$CHECKOUT"/
 }
 
 # fake_tray: a copy of the checkout with a tray/ whose install.sh only logs
 # what it was asked, like the tray app's own installer.
 fake_tray() {
-  CHECKOUT="$BATS_TEST_TMPDIR/checkout"
   mkdir -p "$CHECKOUT/tray"
-  cp -a "$REPO_ROOT"/bin "$REPO_ROOT"/lib "$REPO_ROOT"/docs "$REPO_ROOT"/completions \
-    "$REPO_ROOT"/install.sh "$REPO_ROOT"/build.sh "$REPO_ROOT"/VERSION "$CHECKOUT"/
   cat > "$CHECKOUT/tray/README.md" <<'EOF'
 # system-optimize-tray
 
@@ -48,7 +52,7 @@ EOF
 }
 
 @test "--list shows the opt-in steps by category and the other parts" {
-  run bash "$REPO_ROOT/install.sh" --list --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --list --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   assert_output_contains "memory   mglru thp"
   assert_output_contains "gpu      gpu-memory rocm"
@@ -58,7 +62,7 @@ EOF
 
 @test "--custom turns the chosen steps on in the config file and records it" {
   echo "ENABLE=dns" > "$SO_SYSTEM_CONFIG"
-  run bash "$REPO_ROOT/install.sh" --custom memory,noatime --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom memory,noatime --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   [ -x "$PREFIX_DIR/bin/system-optimize" ]
   grep -qx 'ENABLE=dns,mglru,thp,noatime' "$SO_SYSTEM_CONFIG"
@@ -69,22 +73,20 @@ EOF
 }
 
 @test "--custom refuses unknown names, default steps and parts this checkout lacks" {
-  run bash "$REPO_ROOT/install.sh" --custom memory,bogus --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom memory,bogus --prefix "$PREFIX_DIR"
   [ "$status" -ne 0 ]
   assert_output_contains "unknown component: bogus"
-  run bash "$REPO_ROOT/install.sh" --custom sysctl --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom sysctl --prefix "$PREFIX_DIR"
   [ "$status" -ne 0 ]
   assert_output_contains "sysctl is a default step"
-  if [ ! -d "$REPO_ROOT/tray" ]; then
-    run bash "$REPO_ROOT/install.sh" --custom tray --prefix "$PREFIX_DIR"
-    [ "$status" -ne 0 ]
-    assert_output_contains "can't install tray: this checkout has no tray directory"
-  fi
+  run bash "$CHECKOUT/install.sh" --custom tray --prefix "$PREFIX_DIR"
+  [ "$status" -ne 0 ]
+  assert_output_contains "can't install tray: this checkout has no tray directory"
   [ ! -e "$PREFIX_DIR/bin/system-optimize" ]
 }
 
 @test "--full --yes leaves out reboot steps and the COPR, and installs PCP" {
-  run bash "$REPO_ROOT/install.sh" --full --yes --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --full --yes --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   local enable; enable=$(sed -n 's/^ENABLE=//p' "$SO_SYSTEM_CONFIG")
   [[ ",$enable," == *,mglru,* ]]
@@ -97,13 +99,22 @@ EOF
   grep -q "^pkg	dnf	pcp-zeroconf$" "$SO_INSTALL_MANIFEST"
 }
 
+@test "--full with the tray app hands monitoring (and so PCP) to tray/install.sh" {
+  fake_tray
+  run bash "$CHECKOUT/install.sh" --full --yes --prefix "$PREFIX_DIR"
+  [ "$status" -eq 0 ]
+  grep -q '^tray-install --tray .*--monitoring .*--yes' "$STUB_LOG"
+  assert_output_contains "pcp: installed with the tray's monitoring part"
+  ! grep -q 'dnf install -y pcp-zeroconf' "$STUB_LOG"
+}
+
 @test "--apply runs the program, and --uninstall disables what it applied and puts everything back" {
-  run bash "$REPO_ROOT/install.sh" --custom thp,pcp --apply --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom thp,pcp --apply --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   grep -q '^program apply --yes$' "$STUB_LOG"
   grep -q "^applied	thp$" "$SO_INSTALL_MANIFEST"
   : > "$STUB_LOG"
-  run bash "$REPO_ROOT/install.sh" --uninstall --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --uninstall --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   grep -q '^program disable thp --yes$' "$STUB_LOG"
   grep -q 'dnf remove -y pcp-zeroconf' "$STUB_LOG"
@@ -115,7 +126,7 @@ EOF
 }
 
 @test "scx applies the scheduler step with --install-tools" {
-  run bash "$REPO_ROOT/install.sh" --custom scx --apply --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom scx --apply --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   grep -qx 'ENABLE=scheduler' "$SO_SYSTEM_CONFIG"
   grep -q '^program apply scheduler --install-tools --yes$' "$STUB_LOG"
@@ -123,7 +134,7 @@ EOF
 
 @test "a package that was already there is neither recorded nor removed" {
   export STUB_RPM_INSTALLED=pcp-zeroconf
-  run bash "$REPO_ROOT/install.sh" --custom pcp --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom pcp --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   assert_output_contains "pcp-zeroconf is already installed"
   ! grep -q 'dnf install' "$STUB_LOG"
@@ -131,7 +142,7 @@ EOF
 }
 
 @test "--dry-run shows the plan and changes nothing" {
-  run bash "$REPO_ROOT/install.sh" --custom memory,pcp --apply --dry-run --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --custom memory,pcp --apply --dry-run --prefix "$PREFIX_DIR"
   [ "$status" -eq 0 ]
   assert_output_contains "would set ENABLE=mglru,thp in $SO_SYSTEM_CONFIG"
   assert_output_contains "would install pcp-zeroconf with dnf"
@@ -144,7 +155,7 @@ EOF
 
 @test "interactive Custom shows each step's readme, ? shows the whole section, and the summary asks first" {
   # 2 = Custom; power: no; memory: yes, mglru ?, then yes, thp no; the rest no.
-  run bash -c "printf '2\nn\ny\n?\ny\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\ny\n' | bash '$REPO_ROOT/install.sh' --interactive --prefix '$PREFIX_DIR'"
+  run bash -c "printf '2\nn\ny\n?\ny\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\nn\ny\n' | bash '$CHECKOUT/install.sh' --interactive --prefix '$PREFIX_DIR'"
   [ "$status" -eq 0 ]
   assert_output_contains "system-optimize installer"
   assert_output_contains "Fedora Linux 43"
@@ -157,7 +168,7 @@ EOF
 }
 
 @test "interactive: q quits before anything changes" {
-  run bash -c "printf 'q\n' | bash '$REPO_ROOT/install.sh' --interactive --prefix '$PREFIX_DIR'"
+  run bash -c "printf 'q\n' | bash '$CHECKOUT/install.sh' --interactive --prefix '$PREFIX_DIR'"
   [ "$status" -eq 0 ]
   assert_output_contains "nothing installed"
   [ ! -e "$PREFIX_DIR/bin/system-optimize" ]
@@ -165,7 +176,7 @@ EOF
 
 @test "interactive Full lists what it leaves out and asks for each" {
   # 1 = Full; scx no, gpu-memory yes, rocm no; go ahead; don't apply.
-  run bash -c "printf '1\nn\ny\nn\ny\nn\n' | bash '$REPO_ROOT/install.sh' --interactive --prefix '$PREFIX_DIR'"
+  run bash -c "printf '1\nn\ny\nn\ny\nn\n' | bash '$CHECKOUT/install.sh' --interactive --prefix '$PREFIX_DIR'"
   [ "$status" -eq 0 ]
   assert_output_contains "Left out of a full install"
   assert_output_contains "rocm: needs a reboot"
@@ -176,7 +187,7 @@ EOF
 }
 
 @test "without a terminal and without component options, install.sh installs only the program" {
-  run bash "$REPO_ROOT/install.sh" --prefix "$PREFIX_DIR" < /dev/null
+  run bash "$CHECKOUT/install.sh" --prefix "$PREFIX_DIR" < /dev/null
   [ "$status" -eq 0 ]
   assert_output_contains "(single file) to $PREFIX_DIR/bin/system-optimize"
   [ ! -e "$SO_SYSTEM_CONFIG" ]
@@ -221,8 +232,8 @@ EOF
 }
 
 @test "--no-color gives plain output; --color=always colors it" {
-  run bash "$REPO_ROOT/install.sh" --list --color=always --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --list --color=always --prefix "$PREFIX_DIR"
   [[ "$output" == *$'\e['* ]]
-  run bash "$REPO_ROOT/install.sh" --list --color=always --no-color --prefix "$PREFIX_DIR"
+  run bash "$CHECKOUT/install.sh" --list --color=always --no-color --prefix "$PREFIX_DIR"
   [[ "$output" != *$'\e['* ]]
 }
