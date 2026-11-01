@@ -4,7 +4,10 @@ The GNOME Shell extension runs this (as the user) and reads JSON from it, so
 both front ends share one implementation of monitoring and of talking to
 system-optimize.
 
-  monitor [--watch] [--interval S]   one JSON sample, or one per line forever
+  monitor [--watch] [--interval S] [--record]
+                                     one JSON sample, or one per line forever;
+                                     --record also keeps resource averages
+                                     (at most once a minute, see history.py)
   features                           steps, their state, capabilities (JSON)
   set NAME on|off                    turn one step on or off (pkexec)
   apply-all                          a normal run of every default step (pkexec)
@@ -42,19 +45,31 @@ def _result(rc_out_err):
     return {"ok": rc == 0, "code": rc, "output": text.strip()}
 
 
-def cmd_monitor(args, out=sys.stdout):
+def cmd_monitor(args, out=sys.stdout, recorder=None):
     mon = Monitor(root=os.environ.get("SO_ROOT", "/"))
+    if args.record and recorder is None:
+        from .history import Recorder
+        recorder = Recorder()
+
+    def one():
+        sample = mon.sample()
+        _emit(sample, out)
+        if recorder:
+            recorder.add(sample)
+
     mon.cpu()                    # prime the CPU counters
     time.sleep(min(0.5, args.interval))
-    _emit(mon.sample(), out)
-    if not args.watch:
-        return 0
     try:
-        while True:
+        one()
+        while args.watch:
             time.sleep(args.interval)
-            _emit(mon.sample(), out)
+            one()
     except (KeyboardInterrupt, BrokenPipeError):
-        return 0
+        pass
+    finally:
+        if recorder:
+            recorder.close()
+    return 0
 
 
 def cmd_features(cli, out=sys.stdout):
@@ -87,6 +102,7 @@ def build_parser():
     m = sub.add_parser("monitor")
     m.add_argument("--watch", action="store_true")
     m.add_argument("--interval", type=float, default=2.0)
+    m.add_argument("--record", action="store_true", help="keep hourly and daily averages for the dashboard")
     sub.add_parser("features")
     s = sub.add_parser("set")
     s.add_argument("name")

@@ -65,6 +65,8 @@ class Controller(QtCore.QObject):
         self.cli = cli
         self.monitor = monitor
         self.agent_factory = agent_factory  # () -> (Agent, client) or None when not installed
+        self.recorder = None                # history.Recorder when this process keeps resource averages
+        self.pcp = None                     # pcp.PcpSource: Performance Co-Pilot's archives, when installed
         self.info = {"found": False, "features": [], "capabilities": []}
         self.history = {"benchmarks": [], "changes": [], "available": False}
         self.sample = None
@@ -112,6 +114,8 @@ class Controller(QtCore.QObject):
             self.sample = self.monitor.sample()
         except Exception:   # a broken sensor must not stop the readout
             self.sample = None
+        if self.recorder and self.sample:
+            self.recorder.add(self.sample)
         fresh = self.pressure.update(self.sample)
         # psi-notify already notifies about the same thing: don't double up
         if self.psi_alerts and not (self.sample or {}).get("pressure_notifier"):
@@ -182,7 +186,9 @@ class Panel(QtWidgets.QWidget):
         self.detail = self._build_detail()
         self.chat = self._build_chat()
         self.about = self._build_about()
-        for w in (self.dash, self.detail, self.chat, self.about):
+        self.resource = self._build_resource()
+        self.resource_name = None
+        for w in (self.dash, self.detail, self.chat, self.about, self.resource):
             self.stack.addWidget(w)
 
         ctl.sample_changed.connect(self._on_sample)
@@ -301,6 +307,8 @@ class Panel(QtWidgets.QWidget):
         }
         for i, t in enumerate(self.tiles.values()):
             grid.addWidget(t, i // 2, i % 2)
+            t.setToolTip("Averages over time and around each setting change")
+            t.clicked.connect(lambda k=t.key: self.open_resource(k))
         self.tiles["gpu"].hide()
         self.tiles["gpu_mem"].hide()
         lay.addLayout(grid)
@@ -419,6 +427,13 @@ class Panel(QtWidgets.QWidget):
         self._show_warnings()
         lines = readout_lines(s)
         self.power_label.setText(lines[-1] if lines else "")
+        if self.resource_name and self.stack.currentWidget() is self.resource:
+            self._res_now()
+
+    def _res_now(self):
+        from .history import METRICS, value
+        unit = METRICS[self.resource_name][1]
+        self.res_stats["now"].setText(self._fmt_value(value(self.ctl.sample, self.resource_name), unit))
 
     def _show_warnings(self):
         w = self.ctl.warnings()
@@ -510,6 +525,8 @@ class Panel(QtWidgets.QWidget):
         self._refresh_agent()
         if self.stack.currentWidget() is self.detail and self.detail_name:
             self._fill_detail(self.detail_name)
+        if self.stack.currentWidget() is self.resource and self.resource_name:
+            self._load_resource(self.resource_name)
 
     def toggle_category(self, key):
         expanded = set(filter(None, self.settings.get("EXPANDED", "").split(",")))
@@ -661,6 +678,169 @@ class Panel(QtWidgets.QWidget):
 
     def show_dashboard(self):
         self.stack.setCurrentWidget(self.dash)
+
+    # -- resources ---------------------------------------------------
+    def _build_resource(self):
+        page, lay = self._scroll_page()
+        top = QtWidgets.QHBoxLayout()
+        back = QtWidgets.QPushButton("‹ Back")
+        back.setProperty("flat", True)
+        back.clicked.connect(self.show_dashboard)
+        top.addWidget(back)
+        top.addStretch(1)
+        lay.addLayout(top)
+        self.res_title = _label("", "h1")
+        lay.addWidget(self.res_title)
+        stats = QtWidgets.QHBoxLayout()
+        stats.setSpacing(8)
+        self.res_stats = {}
+        for key, title in (("now", "NOW"), ("avg", "30-DAY AVERAGE"), ("since", "SINCE FIRST CHANGE")):
+            card = Card()
+            cl = QtWidgets.QVBoxLayout(card)
+            cl.setContentsMargins(10, 8, 10, 8)
+            cl.setSpacing(2)
+            cl.addWidget(_label(title, "muted"))
+            value = QtWidgets.QLabel("–")
+            value.setFont(mono(13, bold=True))
+            cl.addWidget(value)
+            self.res_stats[key] = value
+            stats.addWidget(card, 1)
+        lay.addLayout(stats)
+        lay.addWidget(_label("Daily average", "h2"))
+        self.res_note = _label("", "muted", wrap=True)
+        self.res_note.setFont(mono(8))
+        lay.addWidget(self.res_note)
+        self.res_chart = TimeChart(self.c)
+        lay.addWidget(self.res_chart)
+        lay.addWidget(_label("Around each change", "h2"))
+        self.res_log = QtWidgets.QTableWidget(0, 3)
+        self.res_log.setHorizontalHeaderLabels(["When", "Change", "7 days before → after"])
+        self.res_log.verticalHeader().hide()
+        self.res_log.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.res_log.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.res_log.setFont(mono(8))
+        hh = self.res_log.horizontalHeader()
+        hh.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.res_log.setMinimumHeight(150)
+        lay.addWidget(self.res_log)
+        rec = QtWidgets.QHBoxLayout()
+        rec.addWidget(_label("Keep resource history", None), 1)
+        self.res_record = Switch(self.c)
+        self.res_record.setChecked(self.settings.get("RECORD_HISTORY", "1") == "1")
+        self.res_record.clicked.connect(self.set_recording)
+        rec.addWidget(self.res_record)
+        lay.addLayout(rec)
+        lay.addWidget(_label("Hourly and daily averages, kept on this computer only. Hourly detail is kept for "
+                             "90 days, daily averages for good.", "muted", wrap=True))
+        lay.addStretch(1)
+        return page
+
+    def set_recording(self, on):
+        self.settings["RECORD_HISTORY"] = "1" if on else "0"
+        try:
+            settings_mod.save("RECORD_HISTORY", self.settings["RECORD_HISTORY"])
+        except (OSError, ValueError):
+            pass
+        if self.ctl.recorder is not None:
+            self.ctl.recorder.enabled = bool(on)
+        if self.resource_name:
+            self._load_resource(self.resource_name)
+
+    def open_resource(self, name):
+        from .history import METRICS
+        if name not in METRICS:
+            return
+        self.resource_name = name
+        self.res_title.setText(METRICS[name][0])
+        self.res_chart.unit = METRICS[name][1]
+        self.stack.setCurrentWidget(self.resource)
+        self._res_now()
+        self._load_resource(name)
+
+    def _load_resource(self, name):
+        from .history import History, resource_report
+        from .pcp import pick_history
+        changes = self.ctl.history.get("changes") or []
+        source_setting = self.settings.get("HISTORY_SOURCE", "auto")
+
+        def work():
+            own = History()
+            try:
+                hist, source = pick_history(name, own, self.ctl.pcp, source_setting)
+                rep = resource_report(hist, name, changes)
+                rep["source"] = source
+                return rep
+            finally:
+                own.close()
+
+        def done(res):
+            if self.resource_name == name and not isinstance(res, Exception):
+                self._fill_resource(res)
+        self.ctl.run_bg(work, done)
+
+    def _fmt_value(self, v, unit):
+        if v is None:
+            return "–"
+        return ("%.1f" if unit == "MB/s" else "%.0f") % v + ("%" if unit == "%" else " " + unit)
+
+    def _effect_color(self, delta, better):
+        if delta is None or better is None or abs(delta) < 0.05:
+            return None
+        good = delta < 0 if better == "lower" else delta > 0
+        return self.c["good"] if good else self.c["bad"]
+
+    def _fill_resource(self, rep):
+        unit = rep["unit"]
+        self.res_stats["avg"].setText(self._fmt_value(rep["avg30"], unit))
+        since = rep["since_first_pct"]
+        self.res_stats["since"].setText(fmt_pct(since))
+        color = self._effect_color(since, rep["better"])
+        self.res_stats["since"].setStyleSheet("color: %s;" % color if color else "")
+        self.res_stats["since"].setToolTip(
+            "Average since the first recorded setting change, against the 7 days before it")
+        points = [(start + 43200, avg) for start, avg, *_ in rep["series"]]
+        markers = [(g["time"], g["changes"][0].get("target") or g["changes"][0].get("step") or "")
+                   for g in rep["markers"]]
+        periods = [(pd["start"], pd["end"], pd["avg"]) for pd in rep["periods"]]
+        if self.settings.get("RECORD_HISTORY", "1") != "1":
+            empty = "Resource history is off. Turn it on below to start recording."
+        elif self.ctl.recorder is None and not points:
+            empty = ("Nothing recorded yet. The tray icon (or the GNOME extension) records while it runs; "
+                     "the first point appears after a day.")
+        else:
+            empty = "Recording. The first daily average appears after the first day."
+        self.res_chart.set(points, markers, periods, empty_text=empty)
+        note = ("Dashed lines: the average between setting changes. Markers: when settings changed."
+                if points else "")
+        if rep.get("source") == "pcp":
+            note = (note + " " if note else "") + "From Performance Co-Pilot's archives."
+        self.res_note.setText(note)
+        self.res_log.setRowCount(0)
+        for eff in reversed(rep["effects"]):
+            r = self.res_log.rowCount()
+            self.res_log.insertRow(r)
+            when = time.strftime("%b %d %H:%M", time.localtime(eff["time"]))
+            names = sorted({c.get("step") or c.get("target") or "" for c in eff["changes"]})
+            what = ", ".join(n for n in names if n) or "settings"
+            if len(eff["changes"]) > 1:
+                what += "  (%d changes)" % len(eff["changes"])
+            if eff["before"] is None or eff["after"] is None:
+                ba = "not enough data"
+            else:
+                ba = "%s → %s  %s" % (self._fmt_value(eff["before"], unit), self._fmt_value(eff["after"], unit),
+                                      fmt_pct(eff["delta_pct"]))
+            cells = (QtWidgets.QTableWidgetItem(when), QtWidgets.QTableWidgetItem(what), QtWidgets.QTableWidgetItem(ba))
+            color = self._effect_color(eff["delta_pct"], rep["better"])
+            if color:
+                cells[2].setForeground(QtGui.QColor(color))
+            for col, item in enumerate(cells):
+                item.setToolTip(item.text())
+                self.res_log.setItem(r, col, item)
+        if not rep["effects"]:
+            self.res_log.insertRow(0)
+            self.res_log.setItem(0, 1, QtWidgets.QTableWidgetItem("no setting changes recorded yet"))
 
     # -- agent -------------------------------------------------------
     def _build_chat(self):
