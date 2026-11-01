@@ -348,7 +348,7 @@ above.
 | btrfsmaintenance | a scrub owner for the `btrfs` step | GPL-2.0 |
 | ananicy-cpp | `responsive` step | GPL-3.0-only |
 | GameMode | `responsive` step | BSD-3-Clause |
-| uresourced | `responsive` step on Fedora | see project |
+| uresourced | `responsive` step on Fedora | LGPL-2.1-or-later |
 | profile-sync-daemon | `psd` step | MIT |
 | plocate | `plocate` step | GPL-2.0-or-later |
 | Linux kernel | MGLRU, transparent huge pages, PSI, amd-pstate, platform_profile | GPL-2.0 |
