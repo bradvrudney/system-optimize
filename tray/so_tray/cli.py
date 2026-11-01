@@ -50,10 +50,13 @@ TITLES = {
     "battery": ("Battery care", "80% charge limit where supported"),
     "llm": ("Local LLM", "GPU memory and hugepages for model serving"),
     "drift": ("Drift watch", "weekly check that settings still hold"),
+    "gpu-memory": ("GPU memory", "how much system RAM the integrated GPU may map (GTT), for local models"),
+    "scheduler": ("CPU scheduler", "an optional sched_ext (scx) scheduler through scx_loader"),
 }
 CATEGORIES = [   # (key, title, steps); the CLI's "category" field wins when it sends one
-    ("power", "Power and CPU", ("cpu", "tuned", "battery", "responsive")),
-    ("memory", "Memory", ("sysctl", "limits", "llm")),
+    ("power", "Power and CPU", ("cpu", "tuned", "battery", "responsive", "scheduler", "scx")),
+    ("memory", "Memory", ("sysctl", "limits", "llm", "mglru", "thp")),
+    ("gpu", "GPU and AI", ("gpu-memory", "gpu", "ttm")),
     ("storage", "Storage", ("io", "trim", "disk", "btrfs", "indexing", "caching")),
     ("network", "Network", ("network",)),
     ("display", "Display and fonts", ("display", "fonts", "desktop")),
@@ -174,6 +177,9 @@ def parse_status_json(text):
         "profiles": profiles,
         "profile": data.get("profile") if isinstance(data.get("profile"), str) else None,
         "snapshots": snaps,
+        "warnings": [{"id": _short_str(w.get("id"), 40), "text": w["text"][:400]}
+                     for w in data.get("warnings") or []
+                     if isinstance(w, dict) and isinstance(w.get("text"), str) and w["text"].strip()][:8],
     }
 
 
@@ -216,7 +222,7 @@ class Cli:
             rc, out, _ = self._cli(["--version"], timeout=15)
             info = {"version": out.strip() if rc == 0 else "", "features": feats,
                     "capabilities": set(), "profiles": [], "profile": None, "snapshots": [],
-                    "source": "help"}
+                    "warnings": [], "source": "help"}
         self.caps = set(info["capabilities"]) | capabilities_from_options(helpinfo["options"])
         info["capabilities"] = sorted(self.caps)
         info["found"] = True
@@ -350,7 +356,8 @@ def parse_history(text):
         scores = {k: _num(v) for k, v in (b.get("scores") or {}).items() if _num(v) is not None}
         benches.append({"id": str(b.get("id", "")), "time": b["time"], "snapshot": b.get("snapshot"),
                         "profile": b.get("profile"), "scores": scores,
-                        "units": {k: str(v) for k, v in (b.get("units") or {}).items()}})
+                        "units": {k: str(v) for k, v in (b.get("units") or {}).items()},
+                        "llm_model": _short_str((b.get("scores") or {}).get("llm_model") or b.get("llm_model"))})
     changes = []
     for c in data.get("changes") or []:
         if not isinstance(c, dict) or not isinstance(c.get("time"), str):
@@ -362,6 +369,10 @@ def parse_history(text):
     benches.sort(key=lambda b: b["time"])
     changes.sort(key=lambda c: c["time"])
     return {"benchmarks": benches, "changes": changes, "available": True}
+
+
+def _short_str(v, n=80):
+    return v[:n] if isinstance(v, str) and v.strip() else None
 
 
 def _names(items):

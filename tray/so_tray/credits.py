@@ -3,6 +3,12 @@
 import json
 import os
 
+# The About screen's sections, in order: (group key in credits.json, heading)
+GROUPS = (("origin", "Where it started"), ("integrates", "Tuning tools it uses and works alongside"),
+          ("monitoring", "Readings, alerts and history come from"), ("tray", "The tray app is built with"),
+          ("agent", "The optional tuning agent uses"), ("recommends", "Also recommended"),
+          ("ideas", "Ideas and measured defaults from"), ("development", "Tested with"))
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CANDIDATES = (
     os.path.join(HERE, "credits.json"),                       # installed next to the package

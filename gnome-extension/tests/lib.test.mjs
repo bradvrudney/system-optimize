@@ -3,7 +3,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
     parseJsonLine, panelLabel, readoutLines, featureEntries, actionsAvailable,
-    resultMessage, categories, categoryCount, themeFromConfig,
+    resultMessage, categories, categoryCount, themeFromConfig, configValue,
+    gpuMemoryLine, PressureAlerts, warningLines,
 } from '../system-optimize@bradvrudney.github.io/lib.js';
 
 const sample = {
@@ -88,4 +89,49 @@ test('themeFromConfig', () => {
     assert.equal(themeFromConfig("THEME='light'\nEXPANDED=memory"), 'light');
     assert.equal(themeFromConfig('THEME=purple'), 'system');
     assert.equal(themeFromConfig(null), 'system');
+});
+
+test('gpuMemoryLine and the readout line', () => {
+    const gpu = {vram_used_mb: 512, vram_total_mb: 512, gtt_used_mb: 8908, gtt_total_mb: 32256,
+        mem_used_mb: 9420, mem_total_mb: 32768, mem_percent: 28.7};
+    assert.equal(gpuMemoryLine(gpu), 'GPU memory 9.2 / 32.0 GB (29%) · VRAM 0.5 · GTT 8.7');
+    assert.equal(gpuMemoryLine({}), null);
+    assert.equal(gpuMemoryLine(undefined), null);
+    const lines = readoutLines({...sample, gpu});
+    assert.equal(lines[2], 'GPU memory 9.2 / 32.0 GB (29%) · VRAM 0.5 · GTT 8.7');
+    assert.equal(lines.length, 5);
+});
+
+test('PressureAlerts: once per episode, re-armed below 80% and after the cooldown', () => {
+    let now = 1000;
+    const a = new PressureAlerts(() => now);
+    const psi = mem => ({pressure: {memory: {some: {avg10: mem}}}});
+    assert.deepEqual(a.update(psi(5)), []);
+    const fresh = a.update(psi(12));
+    assert.equal(fresh.length, 1);
+    assert.match(fresh[0], /^Memory pressure: .* 12% .*alert at 10%/);
+    assert.deepEqual(a.update(psi(30)), []);
+    assert.equal(a.active.length, 1);
+    a.update(psi(9));
+    assert.deepEqual(a.update(psi(11)), [], 'not re-armed above 80%');
+    a.update(psi(2));
+    assert.deepEqual(a.update(psi(11)), [], 'inside the cooldown');
+    now += 400;
+    a.update(psi(2));
+    assert.equal(a.update(psi(11)).length, 1);
+    const b = new PressureAlerts(() => 0);
+    assert.deepEqual(b.update({pressure: {io: {some: {avg10: 90}, full: {avg10: 1}}}}), [], 'io counts full');
+    assert.deepEqual(b.update(null), []);
+});
+
+test('warningLines merges and deduplicates', () => {
+    const s = {warnings: [{id: 'scx-ananicy', text: 'scx_lavd and ananicy-cpp are both running.'}]};
+    const i = {warnings: [{id: 'scx-ananicy', text: 'dup'}, {id: 'b', text: 'bpftune runs.'}, {text: 3}, null]};
+    assert.deepEqual(warningLines(s, i), ['scx_lavd and ananicy-cpp are both running.', 'bpftune runs.']);
+    assert.deepEqual(warningLines(null, undefined), []);
+});
+
+test('configValue', () => {
+    assert.equal(configValue('THEME=dark\nPSI_ALERTS=0\n', 'PSI_ALERTS', '1'), '0');
+    assert.equal(configValue('', 'PSI_ALERTS', '1'), '1');
 });

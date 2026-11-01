@@ -1,7 +1,7 @@
 # system-optimize-tray
 
 A tray icon and dashboard for `system-optimize`. It shows what the machine is
-doing (CPU, memory, temperatures, disk I/O, power profile), what
+doing (CPU, memory, temperatures, disk I/O, GPU and GPU memory, power profile), what
 system-optimize has changed, and whether each change made the benchmark
 better or worse. Every change goes through `system-optimize` itself, behind a
 polkit password prompt, and can be undone.
@@ -14,11 +14,31 @@ polkit password prompt, and can be undone.
 
 - **Live tiles** for CPU load, memory, CPU temperature and disk I/O, each with
   a sparkline, plus the power profile and which daemon owns it.
+- **GPU tiles** on machines with an AMD GPU: how busy it is, and GPU memory as
+  VRAM (the carve-out) plus GTT (system RAM the GPU has mapped, which is where
+  an APU keeps most of a local model). With
+  [amdgpu_top](https://github.com/Umio-Yasuno/amdgpu_top) installed the
+  numbers come from it, and the tile's tooltip names the processes using the
+  most GPU memory; without it they come from amdgpu's files in `/sys`.
+- **Pressure alerts**: a notification when the kernel's pressure stall
+  information (`/proc/pressure`) crosses
+  [psi-notify](https://github.com/cdown/psi-notify)'s thresholds (CPU 50%,
+  memory 10% "some", disk I/O 15% "full", over 10 seconds). One alert per
+  episode, then quiet for at least 5 minutes. If psi-notify itself is
+  running, the tray leaves the notifications to it and only shows the line on
+  the dashboard. Turn them off with `PSI_ALERTS=0`.
+- **Conflict warnings**: an amber line at the top when tools that fight each
+  other are both running, such as an scx (sched_ext) scheduler with
+  ananicy-cpp. system-optimize can add its own (`warnings` in
+  `--status --json`).
 - **Benchmark against your baseline**: your first benchmark is the baseline;
-  each later run shows the change.
+  each later run shows the change. When system-optimize ran llama-bench, the
+  card also shows prompt and generation tokens/s against the first run that
+  had them, and each step's change log shows the LLM effect next to the
+  overall one. Tokens/s are kept out of the overall score.
 - **A switch per tuning step**, grouped into categories (Power and CPU,
-  Memory, Storage, Network, Display and fonts, Boot and cleanup, Helpers and
-  checks). Categories start collapsed and show "n/m on" and the benchmark
+  Memory, GPU and AI, Storage, Network, Display and fonts, Boot and cleanup,
+  Helpers and checks). Categories start collapsed and show "n/m on" and the benchmark
   change measured after their changes; the panel remembers which ones you
   opened.
 - **A page per step**: what it does and which settings it changes (from
@@ -32,6 +52,8 @@ polkit password prompt, and can be undone.
 - **An optional local tuning agent** (below).
 
 ## GNOME, KDE and the rest
+
+The GNOME menu shows the same GPU memory line, warnings and pressure alerts.
 
 | Desktop | What shows up |
 |---|---|
@@ -96,6 +118,17 @@ turns off what the installed version can't do, with a tooltip saying why:
 | `history` | scores and change logs (`--history --json`, readable as a normal user) |
 | `describe` | step pages (`--describe STEP --json`); otherwise the step's section of `--help` |
 | `safe-apply` | agent proposals are applied with `--safe-apply` |
+
+Optional fields the tray uses when they are there:
+
+- `warnings: [{"id", "text"}]` at the top of `--status --json`: shown in the
+  dashboard's warning line (the tray adds its own scx and ananicy-cpp check).
+- `scores.llm_pp`, `scores.llm_tg` (tokens/s, higher is better) and
+  `scores.llm_model` in each benchmark of `--history --json`: llama-bench's
+  prompt processing and generation results.
+- a step's `category`: new steps without one go where their name suggests
+  (`gpu-memory` under GPU and AI, `scheduler` under Power and CPU, `mglru` and
+  `thp` under Memory), and anything else under Other.
 
 With system-optimize 2.0.0, which has none of the JSON output yet, the tray
 still shows the live readings and the step list from `--help`, and Apply all,
@@ -168,6 +201,7 @@ you ever want it.
 |---|---|---|
 | `THEME` | `system` | `light`, `dark` or `system` (also in the panel's ◐ menu) |
 | `EXPANDED` | empty | categories you opened, e.g. `memory,storage` |
+| `PSI_ALERTS` | `1` | `0` turns off pressure notifications (the dashboard line stays) |
 
 ## Development
 

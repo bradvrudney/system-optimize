@@ -104,6 +104,7 @@ class App(QtCore.QObject):
             self.tray.activated.connect(self._activated)
             self.ctl.sample_changed.connect(self._tooltip)
             self.ctl.message.connect(self._notify)
+            self.ctl.alert.connect(lambda text: self._notify(text, True))
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.ctl.tick)
         self.timer.start(interval_ms)

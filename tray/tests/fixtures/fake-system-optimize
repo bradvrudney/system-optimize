@@ -35,9 +35,13 @@ HELP_NEW = HELP_OLD.replace("--only LIST  run only these steps",
 
 
 def bench(i, day, cpu, mem, disk):
-    return {"id": "b%d" % i, "time": "2026-10-%02dT09:00:00-04:00" % day, "snapshot": None, "profile": None,
-            "scores": {"cpu": cpu, "memory": mem, "disk": disk, "overall": round((cpu + mem + disk) / 3, 1)},
-            "units": {"cpu": "index", "memory": "index", "disk": "index", "overall": "index"}}
+    b = {"id": "b%d" % i, "time": "2026-10-%02dT09:00:00-04:00" % day, "snapshot": None, "profile": None,
+         "scores": {"cpu": cpu, "memory": mem, "disk": disk, "overall": round((cpu + mem + disk) / 3, 1)},
+         "units": {"cpu": "index", "memory": "index", "disk": "index", "overall": "index"}}
+    if i >= 4:   # llama-bench was installed from the 4th run on
+        b["scores"].update({"llm_pp": 480.0 + 10 * i, "llm_tg": 36.0 + 0.5 * i, "llm_model": "qwen3:4b"})
+        b["units"].update({"llm_pp": "tok/s", "llm_tg": "tok/s"})
+    return b
 
 
 HISTORY = {
@@ -71,6 +75,8 @@ elif "--status" in args and "--json" in args and mode != "old":
         "steps": [{"name": n, "kind": k, "applied": a, "title": t} for n, k, a, t in STEPS],
         "profiles": ["dev", "gaming", "battery", "llm"], "profile": "dev",
         "snapshots": [{"id": "20261020-193000", "summary": "1 change", "undone": False}],
+        "warnings": ([{"id": "bpftune-sysctl", "text": "bpftune is running, so the sysctl step leaves its keys alone."}]
+                     if os.environ.get("FAKE_SO_WARNINGS") else []),
     }))
 elif "--status" in args:
     print("system-optimize %s\n\nSystem\n  os  Fedora Linux 45\n" % ("2.0.0" if mode == "old" else "2.1.0"))

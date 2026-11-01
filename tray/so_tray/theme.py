@@ -62,6 +62,7 @@ QLabel[role="muted"] {{ color: {muted}; }}
 QLabel[role="h1"] {{ font-size: 15pt; font-weight: 600; }}
 QLabel[role="h2"] {{ font-size: 11pt; font-weight: 600; color: {text}; }}
 QLabel[role="chip"] {{ background: {card}; border: 1px solid {border}; border-radius: 9px; padding: 1px 8px; color: {muted}; }}
+QLabel[role="warn"] {{ background: {card}; border: 1px solid {warn}; border-left: 4px solid {warn}; border-radius: 8px; padding: 6px 10px; color: {text}; }}
 QFrame[card="true"] {{ background: {card}; border: 1px solid {border}; border-radius: 10px; }}
 QFrame[card="true"][hover="true"] {{ background: {card_hover}; }}
 QPushButton {{ background: {card}; color: {text}; border: 1px solid {border}; border-radius: 7px; padding: 4px 10px; }}

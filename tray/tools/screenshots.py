@@ -36,7 +36,11 @@ class FakeMonitor:
             "temperature": {"cpu": 56 + 7 * math.sin(i / 6), "gpu": 49, "nvme": 41},
             "power": {"profile": "balanced", "owner": "tuned-ppd", "ac": True, "batteries": []},
             "disk": {"read_mbs": abs(40 * math.sin(i / 3)), "write_mbs": abs(12 * math.cos(i / 4))},
-            "gpu": {"busy_percent": 7},
+            "gpu": {"busy_percent": 31 + 20 * math.sin(i / 4), "name": "Radeon 8060S", "source": "amdgpu_top",
+                    "vram_used_mb": 410, "vram_total_mb": 512, "gtt_used_mb": 9100 + 300 * math.sin(i / 7),
+                    "gtt_total_mb": 32256, "mem_used_mb": 9510 + 300 * math.sin(i / 7), "mem_total_mb": 32768,
+                    "mem_percent": 100 * (9510 + 300 * math.sin(i / 7)) / 32768,
+                    "top": [{"pid": "4242", "name": "llama-server", "vram_mb": 380, "gtt_mb": 8800}]},
         }
 
 
@@ -65,13 +69,16 @@ def main(out):
     for theme in ("dark", "light"):
         settings.save("THEME", theme)
         a = App(tray=False, monitor=FakeMonitor(), agent_factory=lambda cli=None: FakeAgent())
-        a.panel.resize(440, 1180)
+        a.panel.resize(440, 1310)
         for _ in range(60):
             a.ctl.tick()
         loop = QtCore.QEventLoop()
         QtCore.QTimer.singleShot(2500, loop.quit)
         loop.exec()
         a.panel.show()
+        loop = QtCore.QEventLoop()          # let the layout settle after the first show
+        QtCore.QTimer.singleShot(500, loop.quit)
+        loop.exec()
         a.panel.grab().save(os.path.join(out, "dashboard-%s.png" % theme))
         a.panel.open_feature("sysctl")
         loop = QtCore.QEventLoop()

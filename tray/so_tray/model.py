@@ -1,5 +1,9 @@
 """What the tray menu shows, worked out without Qt so it can be tested."""
 
+import time
+
+from .monitor import PSI_THRESHOLDS
+
 
 def _gb(mb):
     return "%.1f" % (mb / 1024.0)
@@ -29,6 +33,9 @@ def readout_lines(sample):
         if mem.get("swap_total_mb"):
             m += " · %s %s GB used" % ("zram" if mem.get("zram") else "swap", _gb(mem.get("swap_used_mb") or 0))
         lines.append(m)
+    gpu_mem = gpu_memory_line(sample.get("gpu"))
+    if gpu_mem:
+        lines.append(gpu_mem)
     other = []
     if temp.get("gpu") is not None:
         other.append("GPU %d°C" % round(temp["gpu"]))
@@ -121,8 +128,14 @@ def _overall(b):
     s = (b or {}).get("scores") or {}
     if "overall" in s:
         return s["overall"]
-    vals = [v for v in s.values() if isinstance(v, (int, float))]
+    # llama-bench tokens/s (llm_*) are on another scale: kept out of the average
+    vals = [v for k, v in s.items() if isinstance(v, (int, float)) and not k.startswith("llm_")]
     return sum(vals) / len(vals) if vals else None
+
+
+def _llm(b):
+    v = ((b or {}).get("scores") or {}).get("llm_tg")
+    return v if isinstance(v, (int, float)) and v > 0 else None
 
 
 def baseline_compare(history):
@@ -147,7 +160,9 @@ def change_log(history, step=None):
         before = _overall(benches.get(c.get("benchmark_before")))
         after = _overall(benches.get(c.get("benchmark_after")))
         pct = 100.0 * (after - before) / abs(before) if before and after is not None else None
-        out.append(dict(c, score_before=before, score_after=after, delta_pct=pct))
+        lb, la = _llm(benches.get(c.get("benchmark_before"))), _llm(benches.get(c.get("benchmark_after")))
+        llm_pct = 100.0 * (la - lb) / lb if lb and la else None
+        out.append(dict(c, score_before=before, score_after=after, delta_pct=pct, llm_delta_pct=llm_pct))
     return out
 
 
@@ -174,3 +189,128 @@ def fmt_pct(p, plus=True):
     if p is None:
         return "–"
     return ("%+.1f%%" if plus else "%.1f%%") % p
+
+
+# -- GPU, pressure and conflicts --------------------------------------------
+
+def gpu_memory_line(gpu):
+    """'GPU memory 9.2 / 32.0 GB (29%) · VRAM 0.5 · GTT 8.7' or None."""
+    gpu = gpu or {}
+    if not gpu.get("mem_total_mb"):
+        return None
+    line = "GPU memory %s / %s GB" % (_gb(gpu.get("mem_used_mb") or 0), _gb(gpu["mem_total_mb"]))
+    if gpu.get("mem_percent") is not None:
+        line += " (%d%%)" % round(gpu["mem_percent"])
+    parts = []
+    if gpu.get("vram_total_mb"):
+        parts.append("VRAM %s" % _gb(gpu.get("vram_used_mb") or 0))
+    if gpu.get("gtt_total_mb"):
+        parts.append("GTT %s" % _gb(gpu.get("gtt_used_mb") or 0))
+    return " · ".join([line] + parts)
+
+
+def gpu_top_text(gpu):
+    """Who is using GPU memory (amdgpu_top only), for a tooltip."""
+    rows = []
+    for p in (gpu or {}).get("top") or []:
+        rows.append("%s (%s): %s GB" % (p.get("name"), p.get("pid"),
+                                        _gb((p.get("vram_mb") or 0) + (p.get("gtt_mb") or 0))))
+    return "\n".join(rows)
+
+
+PRESSURE_TEXT = {
+    "cpu": "CPU pressure: tasks waited for a CPU %d%% of the last 10 s",
+    "memory": "Memory pressure: tasks stalled waiting for memory %d%% of the last 10 s",
+    "io": "Disk pressure: every task stalled on disk I/O %d%% of the last 10 s",
+}
+
+
+class PressureAlerts:
+    """Pressure stall (PSI) alerts with psi-notify's thresholds. One alert per
+    resource when it crosses its threshold, then quiet until it has dropped
+    below 80% of the threshold and the cooldown (5 minutes) has passed, so a
+    busy build doesn't flood the desktop with notifications."""
+    COOLDOWN = 300
+    REARM = 0.8
+
+    def __init__(self, thresholds=None, clock=time.monotonic):
+        self.thresholds = thresholds or PSI_THRESHOLDS
+        self.clock = clock
+        self._armed = {r: True for r in self.thresholds}
+        self._last = {r: None for r in self.thresholds}
+        self.active = []      # lines for the dashboard: resources over their threshold now
+
+    def update(self, sample):
+        """New alerts to notify about, as text lines."""
+        pressure = (sample or {}).get("pressure") or {}
+        now = self.clock()
+        fresh, active = [], []
+        for res, (kind, limit) in self.thresholds.items():
+            v = (pressure.get(res) or {}).get(kind, {}).get("avg10")
+            if v is None:
+                continue
+            if v >= limit:
+                text = PRESSURE_TEXT[res] % round(v) + " (alert at %d%%)." % round(limit)
+                active.append(text)
+                last = self._last[res]
+                if self._armed[res] and (last is None or now - last >= self.COOLDOWN):
+                    fresh.append(text)
+                    self._armed[res] = False
+                    self._last[res] = now
+            elif v < limit * self.REARM:
+                self._armed[res] = True
+        self.active = active
+        return fresh
+
+
+def warning_lines(sample, info):
+    """Conflict warnings from the live readout and from system-optimize's
+    status, without duplicates (by id)."""
+    seen, out = set(), []
+    for w in list((sample or {}).get("warnings") or []) + list((info or {}).get("warnings") or []):
+        if not isinstance(w, dict) or not isinstance(w.get("text"), str):
+            continue
+        key = w.get("id") or w["text"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(w["text"])
+    return out
+
+
+# -- LLM inference benchmark (llama-bench) ------------------------------------
+
+LLM_SCORES = (("llm_pp", "prompt"), ("llm_tg", "generation"))
+
+
+def llm_compare(history):
+    """llama-bench tokens/s, first run vs latest: {'model', 'rows': [(label,
+    first, latest, pct)]}, or None when no benchmark has them."""
+    runs = [b for b in (history or {}).get("benchmarks") or []
+            if any(isinstance((b.get("scores") or {}).get(k), (int, float)) for k, _ in LLM_SCORES)]
+    if not runs:
+        return None
+    first, last = runs[0]["scores"], runs[-1]["scores"]
+    rows = []
+    for key, label in LLM_SCORES:
+        a, b = first.get(key), last.get(key)
+        if not isinstance(b, (int, float)):
+            continue
+        pct = 100.0 * (b - a) / a if isinstance(a, (int, float)) and a > 0 and len(runs) > 1 else None
+        rows.append((label, a, b, pct))
+    model = runs[-1]["scores"].get("llm_model") or runs[-1].get("llm_model")
+    return {"model": model if isinstance(model, str) else None, "rows": rows, "count": len(runs)}
+
+
+def llm_line(history):
+    """'LLM qwen3:4b · prompt 512 t/s (+4.0%) · generation 38.2 t/s (+1.2%)' or None."""
+    c = llm_compare(history)
+    if not c or not c["rows"]:
+        return None
+    parts = ["LLM" + (" " + c["model"] if c["model"] else "")]
+    for label, _a, b, pct in c["rows"]:
+        p = "%s %s t/s" % (label, ("%.0f" % b) if b >= 100 else ("%.1f" % b))
+        if pct is not None:
+            p += " (%s)" % fmt_pct(pct)
+        parts.append(p)
+    return " · ".join(parts)
