@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# tuned-adm stub: the profile lives in STUB_STATE/tuned (default balanced).
+printf 'tuned-adm %s\n' "$*" >> "${STUB_LOG:-/dev/null}"
+f="${STUB_STATE:-/tmp}/tuned"
+cur=$(cat "$f" 2>/dev/null || echo balanced)
+case "${1:-}" in
+  active) echo "Current active profile: $cur" ;;
+  list)
+    echo "Available profiles:"
+    echo "- balanced                    - General non-specialized tuned profile"
+    echo "- powersave                   - Optimize for low power consumption"
+    echo "- throughput-performance      - Broadly applicable tuning that provides excellent performance"
+    echo "Current active profile: $cur" ;;
+  profile) echo "$2" > "$f" ;;
+  off) echo none > "$f" ;;
+esac
+exit "${STUB_EXIT_tuned_adm:-0}"

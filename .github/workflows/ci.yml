@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  BATS_REPO: https://github.com/bats-core/bats-core.git
+  BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5   # v1.14.0
+
+jobs:
+  lint:
+    name: shellcheck and bash -n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+      # bash -n on every script, shellcheck -x on the sources, and a
+      # single-file build that is shellchecked on its own.
+      - run: tests/lint.sh
+
+  unit:
+    name: unit tests (bats, ${{ matrix.target }} build)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [modular, bundle]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch bats-core (pinned)
+        run: |
+          git init -q tests/vendor/bats-core
+          git -C tests/vendor/bats-core fetch -q --depth 1 "$BATS_REPO" "$BATS_COMMIT"
+          git -C tests/vendor/bats-core checkout -q FETCH_HEAD
+      # The same suite runs against bin/ (modular) and against a fresh
+      # single-file build (bundle): both must behave the same. Every test
+      # runs against a fake machine under a temporary directory (SO_ROOT);
+      # nothing on the runner is changed.
+      - run: tests/run.sh
+        env:
+          BATS: ${{ github.workspace }}/tests/vendor/bats-core/bin/bats
+          SO_TEST_TARGET: ${{ matrix.target }}
+
+  bundle:
+    name: single-file build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build.sh dist/system-optimize
+      - name: The single file runs on its own
+        run: |
+          dist/system-optimize --version
+          dist/system-optimize --help >/dev/null
+          dist/system-optimize --completion bash >/dev/null
+          dist/system-optimize --status
+          dist/system-optimize --dry-run --yes
+          (cd dist && sha256sum system-optimize | tee system-optimize.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: system-optimize-single-file
+          path: |
+            dist/system-optimize
+            dist/system-optimize.sha256
+
+  # install.sh and the installed program on the distributions it targets.
+  # Inside each container --status and --dry-run read the real /proc, /sys
+  # and /etc; then, as root, a real run with --force and its --undo, which
+  # must leave /etc exactly as it was (the kernel, disk and CPU steps skip
+  # themselves in a container, so only the container's files can change).
+  # See tests/install-smoke.sh.
+  install-smoke:
+    name: install and run in ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: [lint, unit]
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - "fedora:latest"
+          - "debian:stable-slim"
+          - "ubuntu:latest"
+          - "archlinux:latest"
+          - "opensuse/tumbleweed:latest"
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install bash, coreutils, diffutils, findutils, tar and curl
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf install -y -q bash diffutils findutils tar gzip curl
+          elif command -v apt-get >/dev/null; then
+            apt-get update -q && apt-get install -y -q --no-install-recommends bash curl ca-certificates diffutils
+          elif command -v pacman >/dev/null; then
+            pacman -Sy --noconfirm --needed bash diffutils findutils tar gzip curl
+          elif command -v zypper >/dev/null; then
+            zypper -n install bash diffutils findutils tar gzip curl
+          fi
+      - uses: actions/checkout@v4
+      - run: bash tests/install-smoke.sh
