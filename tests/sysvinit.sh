@@ -10,7 +10,9 @@
 # The container boots /sbin/init from sysvinit-core, so /run/initctl and the
 # /etc/init.d services are real; systemctl is installed and answers "System
 # has not been booted with systemd as init system", which is what broke
-# Debian's pcp package for Ed.
+# Debian's pcp package for Ed. Docker's Debian images ship a policy-rc.d
+# that stops every service from starting; a booted machine has none, so the
+# image removes it.
 #
 # What it checks:
 #   1. --status names SysV init and says systemctl is there without systemd.
@@ -40,7 +42,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -q \\
  && apt-get install -y -q --no-install-recommends sysvinit-core systemd procps bash curl \\
       ca-certificates diffutils findutils tar gzip \\
- && sed -i '/getty/d' /etc/inittab
+ && sed -i '/getty/d' /etc/inittab \\
+ && rm -f /usr/sbin/policy-rc.d
 CMD ["/sbin/init"]
 EOF
   echo "== building $tag from $image (SysV init with systemctl installed)"
