@@ -144,6 +144,33 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(tab["text"], "MAILTO=me\n")
 
 
+    def test_next_run_reports_a_crontab_schedule(self):
+        line = "0 0 * * * /x/agent run --scheduled " + schedule.CRON_TAG
+        crond = {"up": True}
+
+        def run(argv, stdin=None):
+            if argv[0] == "systemctl":
+                return 1, "", "Failed to connect to bus"
+            if argv == ["crontab", "-l"]:
+                return 0, line + "\n", ""
+            if argv[0] == "pgrep":
+                return (0 if crond["up"] and argv[-1] == "crond" else 1), "", ""
+            return 0, "", ""
+        with mock.patch.object(schedule.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertEqual(schedule.next_run(run=run), "by cron (0 0 * * *)")
+            crond["up"] = False
+            self.assertIn("no cron daemon is running", schedule.next_run(run=run))
+
+    def test_next_run_none_without_a_schedule(self):
+        def run(argv, stdin=None):
+            if argv[0] == "systemctl":
+                return 0, "n/a\n", ""
+            if argv == ["crontab", "-l"]:
+                return 1, "", "no crontab for me"
+            return 0, "", ""
+        with mock.patch.object(schedule.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertIsNone(schedule.next_run(run=run))
+
 class ToolsTest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("FAKE_SO_MODE", None)

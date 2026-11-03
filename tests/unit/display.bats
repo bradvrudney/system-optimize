@@ -237,3 +237,46 @@ EOF
   assert_output_contains "1 output(s) already at their highest refresh rate"
   assert_not_called "kscreen-doctor output."
 }
+
+# fake_session_tools LIST: loginctl with the sessions in LIST ("id:type:active:
+# name:desktop" words) and a pgrep that finds nothing, as under sudo on a box
+# whose session is locked or on a second seat.
+fake_session_tools() {
+  local d="$BATS_TEST_TMPDIR/session"
+  mkdir -p "$d"
+  printf '%s\n' "$1" | tr ' ' '\n' | sed '/^$/d' > "$d/sessions"
+  cat > "$d/loginctl" <<EOF
+#!/usr/bin/env bash
+f="$d/sessions"
+case "\$1" in
+  list-sessions) cut -d: -f1 "\$f" | sed 's/\$/ 1000 user seat0/' ;;
+  show-session)
+    line=\$(grep "^\$2:" "\$f") || exit 1
+    case "\$4" in
+      Type) cut -d: -f2 <<< "\$line" ;;
+      Active) cut -d: -f3 <<< "\$line" ;;
+      Name) cut -d: -f4 <<< "\$line" ;;
+      Desktop) cut -d: -f5 <<< "\$line" ;;
+    esac ;;
+esac
+EOF
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/pgrep"
+  chmod +x "$d/loginctl" "$d/pgrep"
+  export PATH="$d:$PATH"
+}
+
+@test "desktop: under sudo with no XDG_CURRENT_DESKTOP, GNOME comes from the user's session or the installed shell" {
+  unset SO_DESKTOP XDG_CURRENT_DESKTOP
+  export SO_DESKTOP_USER=brad
+  fake_session_tools "c1:tty:yes:root: 3:wayland:no:brad:GNOME"
+  load_so
+  [ "$(desktop_kind)" = gnome ]
+  fake_session_tools ""
+  load_so
+  [ "$(desktop_kind)" = none ]
+  mkdir -p "$SANDBOX/usr/bin"
+  printf '#!/bin/sh\n' > "$SANDBOX/usr/bin/gnome-shell"; chmod +x "$SANDBOX/usr/bin/gnome-shell"
+  [ "$(desktop_kind)" = gnome ]
+  cp "$SANDBOX/usr/bin/gnome-shell" "$SANDBOX/usr/bin/plasmashell"
+  [ "$(desktop_kind)" = none ]
+}
