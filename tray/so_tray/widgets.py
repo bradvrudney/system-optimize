@@ -182,8 +182,16 @@ class ElidedLabel(QtWidgets.QLabel):
         self.setMinimumWidth(20)
         super().setText(text)
 
-    def resizeEvent(self, e):
+    def setText(self, text):
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def _elide(self):
         super().setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, self.width()))
+
+    def resizeEvent(self, e):
+        self._elide()
         super().resizeEvent(e)
 
 
@@ -204,6 +212,7 @@ class FeatureRow(Card):
         f = t.font()
         f.setWeight(QtGui.QFont.Weight.DemiBold)
         t.setFont(f)
+        t.setWordWrap(True)      # titles are whole sentences; the row grows, the panel never widens
         text.addWidget(t)
         if summary:
             s = ElidedLabel(summary)

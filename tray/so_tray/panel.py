@@ -22,7 +22,7 @@ from .model import (CHAT_PROMPT_SECONDS, PressureAlerts, actions_available, base
                     warning_lines)
 from .qt import QtCore, QtGui, QtWidgets, Signal
 from .theme import SERIES, colors, mono, resolve, stylesheet
-from .widgets import Card, FeatureRow, ScoreBar, Switch, Tile, TimeChart
+from .widgets import Card, ElidedLabel, FeatureRow, ScoreBar, Switch, Tile, TimeChart
 
 Qt = QtCore.Qt
 WIDTH = 440
@@ -258,7 +258,8 @@ class Panel(QtWidgets.QWidget):
         title = QtWidgets.QVBoxLayout()
         title.setSpacing(0)
         title.addWidget(_label("system-optimize", "h1"))
-        self.version_label = _label("", "muted")
+        self.version_label = ElidedLabel("")     # "system-optimize 2.0.1 (git 0ecd836, single file)" is wider than the header
+        self.version_label.setProperty("role", "muted")
         self.version_label.setFont(mono(8))
         title.addWidget(self.version_label)
         head.addLayout(title, 1)
@@ -373,7 +374,7 @@ class Panel(QtWidgets.QWidget):
         self.ask_edit.returnPressed.connect(self._ask_from_dashboard)
         ask.addWidget(self.ask_edit)
         al.addLayout(ask)
-        self.agent_status = _label("", "muted")
+        self.agent_status = _label("", "muted", wrap=True)   # "... · next Wed 2026-11-04 00:00:43 EST" must not widen the panel
         self.agent_status.setFont(mono(8))
         al.addWidget(self.agent_status)
         lay.addWidget(self.agent_card)
@@ -756,6 +757,14 @@ class Panel(QtWidgets.QWidget):
         self.res_title.setText(METRICS[name][0])
         self.res_chart.unit = METRICS[name][1]
         self.stack.setCurrentWidget(self.resource)
+        # the last page's numbers must not show under this title while the
+        # history loads (Performance Co-Pilot's archives can take a while)
+        for key in ("avg", "since"):
+            self.res_stats[key].setText("–")
+            self.res_stats[key].setStyleSheet("")
+        self.res_note.setText("Loading…")
+        self.res_chart.set([], [], (), empty_text="Loading…")
+        self.res_log.setRowCount(0)
         self._res_now()
         self._load_resource(name)
 

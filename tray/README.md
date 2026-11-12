@@ -95,9 +95,10 @@ target (`sudo make -C tray install-tray`, `install-extension`, `install-agent`
 and their `uninstall-*` twins). `--uninstall --monitoring` removes only the
 packages the script installed.
 
-It needs Python 3 and either PySide6 or PyQt6 (`sudo dnf install
-python3-pyside6` on Fedora). The extension's menu needs only Python; the
-dashboard it opens needs Qt.
+It needs Python 3 and either PySide6 or PyQt6; `tray/install.sh` installs the
+distribution's package when neither imports (`python3-pyside6` on Fedora,
+`python3-pyside6.qtwidgets` on Debian and Ubuntu, `pyside6` on Arch). The
+extension's menu needs only Python; the dashboard it opens needs Qt.
 
 ## How changes are made
 
@@ -124,7 +125,7 @@ turns off what the installed version can't do, with a tooltip saying why:
 | Capability | Used for |
 |---|---|
 | `undo` | Undo last run |
-| `enable` | turning on optional steps (`--enable STEP`) |
+| `enable` | turning on optional steps (`--only STEP`, which takes opt-in steps too; `--enable STEP` would run every default step as well) |
 | `revert-step` | switching one step off (`--undo --only STEP`); without it, the tooltip points at Undo |
 | `profile` | the profile chip and profile menu |
 | `benchmark` | Run benchmark (`--benchmark-only --json`) |

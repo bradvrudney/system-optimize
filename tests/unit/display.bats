@@ -172,6 +172,36 @@ EOF
   [ "$(gs_get org.gnome.mutter experimental-features)" = "['scale-monitor-framebuffer', 'variable-refresh-rate']" ]
 }
 
+@test "display: GNOME 48+ has VRR as a normal setting; only what the schema still lists is added" {
+  # Mutter 48 moved variable-refresh-rate out of experimental-features; gsettings
+  # refuses the whole list when one name is unknown ("outside of the valid range").
+  with_stub gsettings
+  as_desktop gnome wayland
+  gs_put org.gnome.mutter experimental-features "@as []"
+  gs_range org.gnome.mutter experimental-features "scale-monitor-framebuffer kms-modifiers autoclose-xwayland xwayland-native-scaling"
+  run "$SO" -y --only display
+  [ "$status" -eq 0 ]
+  assert_output_contains "added scale-monitor-framebuffer"
+  assert_output_contains "variable-refresh-rate is a regular setting on this GNOME"
+  assert_output_not_contains "outside of the valid range"
+  [ "$(gs_get org.gnome.mutter experimental-features)" = "['scale-monitor-framebuffer']" ]
+  run "$SO" -y --only display
+  [ "$status" -eq 0 ]
+  assert_output_contains "fractional scaling and VRR already offered"
+}
+
+@test "display: a GNOME where both are regular settings has nothing to add" {
+  with_stub gsettings
+  as_desktop gnome wayland
+  gs_put org.gnome.mutter experimental-features "@as []"
+  gs_range org.gnome.mutter experimental-features "kms-modifiers autoclose-xwayland"
+  run "$SO" -y --only display
+  [ "$status" -eq 0 ]
+  assert_output_contains "fractional scaling and VRR already offered"
+  assert_not_called "gsettings set"
+  [ -z "$(snapshots)" ]
+}
+
 @test "display: X11, other desktops, no desktop user and containers are skipped" {
   with_stub gsettings
   run env SO_DESKTOP_USER="$(id -un)" SO_DESKTOP=gnome SO_SESSION_TYPE=x11 "$SO" -y --only display
