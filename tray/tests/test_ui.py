@@ -471,6 +471,7 @@ class AppTest(unittest.TestCase):
         self.a = App(cli=Cli(path=FAKE_CLI, pkexec=stub(d, "pkexec"), helper="/nonexistent/helper"),
                      monitor=FakeMonitor(), tray=True, agent_factory=None, recorder=False)
         self.a.ctl.agent_factory = None
+        self.a.ctl.pcp = None      # never the machine's real Performance Co-Pilot archives: pmrep over them is heavy
         self.a.ctl.info = self.a.cli.describe()
 
     def tearDown(self):
