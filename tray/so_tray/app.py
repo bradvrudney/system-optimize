@@ -329,6 +329,8 @@ class App(QtCore.QObject):
                             msg.get("token") if isinstance(msg.get("token"), str) else None)
 
     def quit(self):
+        from .pcp import stop_readers
+        stop_readers()
         self.panel.save_size()
         if self.listener:
             self.listener.close()

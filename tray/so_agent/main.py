@@ -4,6 +4,9 @@
   system-optimize-agent ask "QUESTION"        one question, answer on stdout
   system-optimize-agent chat                  a conversation in the terminal
   system-optimize-agent run --scheduled       the timer's job: analyse, maybe propose, notify
+  system-optimize-agent triage [--since 1h] [--propose] [--json]
+                                              the quick look: pressure, readings and journal
+                                              warnings decided by rules (and Laya when set up)
   system-optimize-agent proposal [--json]     the pending proposal
   system-optimize-agent approve [--yes]       apply the pending proposal (asks for your password)
   system-optimize-agent dismiss               drop the pending proposal
@@ -24,6 +27,7 @@ from . import DEFAULT_MODEL
 from . import config as cfgmod
 from . import schedule as sched
 from . import store
+from . import triage as triagemod
 from .agent import SCHEDULED_TASK, Agent
 from .llm import LlmError, client
 from .tools import Proposal
@@ -62,6 +66,10 @@ def build_parser():
     ap = sub.add_parser("approve")
     ap.add_argument("--yes", action="store_true")
     sub.add_parser("dismiss")
+    t = sub.add_parser("triage")
+    t.add_argument("--since", default="1h", help="how far back in the journal: 30m, 1h, 1d (default 1h)")
+    t.add_argument("--propose", action="store_true", help="save a suggestion for a confident finding")
+    t.add_argument("--json", action="store_true")
     s = sub.add_parser("schedule")
     s.add_argument("expr", nargs="?")
     m = sub.add_parser("model")
@@ -100,6 +108,11 @@ def cmd_run(cfg, out, cli=None):
     task = SCHEDULED_TASK
     if cfg["AGENT_BENCHMARK"] != "1":
         task += " Do not run a benchmark."
+    if cfg["AGENT_TRIAGE"] != "off":
+        try:        # the quick look first: the model gets facts already decided, not raw logs
+            task += "\n\n" + triagemod.digest(make_triage(cfg)[0].run(gather_signals("1d")))
+        except Exception:
+            pass
     try:
         reply = agent.ask(task)
     except LlmError as exc:
@@ -117,6 +130,74 @@ def cmd_run(cfg, out, cli=None):
         if cfg["AGENT_NOTIFY"] == "1":
             notify("Tuning suggestion: %s" % reply.proposal.summary(),
                    reply.proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+    return 0
+
+
+def make_triage(cfg):
+    """(Triage, a note about the backend or '')."""
+    if cfg["AGENT_TRIAGE"] == "laya":
+        try:
+            import laya  # noqa: F401
+        except ImportError:
+            return triagemod.Triage(), "AGENT_TRIAGE=laya but laya is not installed (pip install laya): rules only"
+        return triagemod.Triage(text_model=triagemod.Laya()), ""
+    return triagemod.Triage(), ""
+
+
+def gather_signals(since):
+    from so_tray.monitor import Monitor
+    signals = triagemod.journal_signals(since)
+    try:
+        signals += triagemod.signals_from_sample(Monitor(root=os.environ.get("SO_ROOT", "/")).sample())
+    except Exception:       # a broken sensor must not stop the look at the journal
+        pass
+    return signals
+
+
+def cmd_triage(args, cfg, out, cli=None, signals=None):
+    if cfg["AGENT_TRIAGE"] == "off":
+        out.write("triage is off (AGENT_TRIAGE=off)\n")
+        return 0
+    if not triagemod.SINCE_RE.match(args.since):
+        print("system-optimize-agent: --since takes a number and s, m, h or d (30m, 1h, 1d)", file=sys.stderr)
+        return 2
+    t, note = make_triage(cfg)
+    findings = t.run(signals if signals is not None else gather_signals(args.since))
+    proposal = None
+    if findings:
+        info = (cli or _cli()).describe()
+        proposal = next((p for p in (triagemod.recommend(f, info) for f in findings) if p), None)
+    saved = False
+    if proposal and args.propose and not store.load_proposal():
+        store.save_proposal(dict(proposal.to_dict(), source="triage"))
+        saved = True
+    backend = "laya" if t.text_model is not None else "rules"
+    if args.json:
+        out.write(json.dumps({"findings": [f.to_dict() for f in findings],
+                              "proposal": proposal.to_dict() if proposal else None, "backend": backend}) + "\n")
+        return 0
+    if note:
+        out.write(note + "\n")
+    for err in t.errors:
+        out.write("triage model error: %s\n" % err)
+    if not findings:
+        out.write("Nothing needs attention (%s, the last %s).\n" % (backend, args.since))
+        return 0
+    for f in findings:
+        out.write("%s: %s, seen %d time%s (%s, %s)\n" % (
+            f.kind, triagemod.SEVERITIES[f.severity], f.count, "" if f.count == 1 else "s",
+            "confident" if f.route == "auto" else "unsure: worth asking the agent", f.backend))
+        out.write("    %s\n" % f.what)
+        for line in f.evidence:
+            out.write("    log: %s\n" % line)
+    if proposal:
+        out.write("\nSuggestion: %s\n  %s\n" % (proposal.summary(), proposal.reason))
+        if saved:
+            out.write("Saved as the pending suggestion (system-optimize-agent approve, or the dashboard).\n")
+        elif args.propose:
+            out.write("Not saved: another suggestion is already pending.\n")
+        else:
+            out.write("Run again with --propose to save it for approval.\n")
     return 0
 
 
@@ -140,7 +221,7 @@ def cmd_approve(args, out, cli=None):
     return 0 if rc == 0 else 1
 
 
-def main(argv=None, out=sys.stdout, cli=None):
+def main(argv=None, out=sys.stdout, cli=None, signals=None):
     args = build_parser().parse_args(argv)
     try:
         cfg = load_cfg(args)
@@ -156,6 +237,8 @@ def main(argv=None, out=sys.stdout, cli=None):
         else:
             out.write(("%s\n  %s\n" % (d["summary"], d.get("reason", ""))) if d else "no pending proposal\n")
         return 0
+    if args.cmd == "triage":
+        return cmd_triage(args, cfg, out, cli, signals)
     if args.cmd == "dismiss":
         store.clear_proposal()
         return 0
