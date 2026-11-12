@@ -71,8 +71,8 @@ PATTERNS = tuple((re.compile(p, re.I), k, s, d) for p, k, s, d in (
     (r"currently unreadable \(pending\) sectors|reallocated_sector_ct changed",
      "disk", 1, "a drive's SMART data shows failing sectors"),
     (r"task .* blocked for more than \d+ seconds", "disk", 1, "a task was blocked for minutes, usually waiting on storage"),
-    (r"temperature (is )?above threshold|cpu clock (is )?throttled|thermal.*critical|critical temperature reached|"
-     r"slowdown temperature|thermal (alert|emergency)",
+    (r"critical temperature reached|thermal.*critical", "thermal", 2, "a part reached its critical temperature"),
+    (r"temperature (is )?above threshold|cpu clock (is )?throttled|slowdown temperature|thermal (alert|emergency)",
      "thermal", 1, "the CPU or another part was throttled or alarmed for heat"),
     (r"soft lockup|hard lockup|rcu_(sched|preempt).*(stall|self-detected)|sched: rt throttling activated",
      "cpu", 2, "a CPU was stuck or stalled"),
