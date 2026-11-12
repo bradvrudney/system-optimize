@@ -567,6 +567,7 @@ class Panel(QtWidgets.QWidget):
         cl.setSpacing(2)
         cl.addWidget(_label(title, "muted"))
         body = _label("", wrap=True)
+        body.setTextFormat(Qt.TextFormat.PlainText)     # some of this is a model's words: never markup
         body.setFont(figures())
         cl.addWidget(body)
         if page:

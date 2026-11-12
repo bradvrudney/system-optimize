@@ -529,6 +529,31 @@ class AppTest(unittest.TestCase):
         self.assertFalse(send_to_running({"page": "overview"}))
         self.assertTrue(self.a.listen())
 
+    def test_the_socket_is_private_and_never_in_a_shared_directory(self):
+        import stat
+        from so_tray import app as appmod
+        self.assertTrue(self.a.listen())
+        st = os.lstat(appmod.socket_path())
+        self.assertEqual(stat.S_IMODE(st.st_mode) & 0o077, 0)
+        self.a.listener.close()
+        # a runtime directory others can write to (or none at all) is not used
+        shared = tempfile.mkdtemp()
+        os.chmod(shared, 0o777)
+        for value in (shared, ""):
+            os.environ["XDG_RUNTIME_DIR"] = value
+            d = appmod.runtime_dir()
+            self.assertTrue(d.startswith(os.environ["XDG_STATE_HOME"]), d)
+            self.assertEqual(stat.S_IMODE(os.stat(d).st_mode), 0o700)
+        # something that is not our socket is never spoken to
+        os.environ["XDG_RUNTIME_DIR"] = tempfile.mkdtemp()
+        open(appmod.socket_path(), "w").close()
+        self.assertFalse(appmod.send_to_running({"page": "overview"}))
+
+    def test_a_suggestion_is_shown_as_plain_text(self):
+        self.assertEqual(self.a.panel.proposal_label.textFormat(), QtCore.Qt.TextFormat.PlainText)
+        self.a.panel.proposal_label.setText("<img src=x> <b>turn on tuned</b>")
+        self.assertEqual(self.a.panel.proposal_label.text(), "<img src=x> <b>turn on tuned</b>")
+
     def test_quit_over_the_socket_and_from_the_menu(self):
         from unittest import mock
         with mock.patch.object(QtWidgets.QApplication, "quit") as q:

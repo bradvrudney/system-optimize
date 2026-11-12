@@ -15,9 +15,10 @@ import argparse
 import json
 import os
 import socket
+import stat
+import struct
 import subprocess
 import sys
-import tempfile
 
 from . import APP_ID, EXTENSION_UUID, VERSION
 from .cli import Cli
@@ -91,7 +92,35 @@ QUICK_ROWS = 12          # the menu has a fixed set of rows: hosts flicker when 
 
 
 def runtime_dir():
-    return os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    """A directory only this user can use: XDG_RUNTIME_DIR, else a private
+    one under the home directory. Never a shared one such as /tmp, where
+    another user could put a socket with our name."""
+    d = os.environ.get("XDG_RUNTIME_DIR")
+    if d and _private_dir(d):
+        return d
+    d = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"),
+                     "system-optimize-tray", "run")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
+
+
+def _private_dir(d):
+    try:
+        st = os.stat(d)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o077
+
+
+def _peer_is_us(conn):
+    """The process at the other end runs as this user (SO_PEERCRED)."""
+    try:
+        creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", creds)
+    except (OSError, AttributeError, struct.error):
+        return False
+    return uid == os.getuid()
 
 
 def socket_path():
@@ -106,10 +135,19 @@ def quit_flag():
 
 def send_to_running(msg, path=None, timeout=1.0):
     """Hand a request to the running instance. False when there is none."""
+    path = path or socket_path()
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.getuid():
+        return False                         # not ours: say nothing to it
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
-        s.connect(path or socket_path())
+        s.connect(path)
+        if not _peer_is_us(s):
+            return False
         s.sendall((json.dumps(msg) + "\n").encode("utf-8"))
         return s.recv(16) == b"ok\n"
     except OSError:
@@ -132,15 +170,17 @@ class Listener(QtCore.QObject):
         except OSError:
             pass
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        old = os.umask(0o077)                # the socket is private from the moment it exists
         try:
             self.sock.bind(self.path)
-            os.chmod(self.path, 0o600)
             self.sock.listen(4)
             self.sock.setblocking(False)
         except OSError:
             self.sock.close()
             self.sock = None
             return
+        finally:
+            os.umask(old)
         self.notifier = QtCore.QSocketNotifier(self.sock.fileno(), QtCore.QSocketNotifier.Type.Read, self)
         self.notifier.activated.connect(self._accept)
 
@@ -148,6 +188,9 @@ class Listener(QtCore.QObject):
         try:
             conn, _addr = self.sock.accept()
         except OSError:
+            return
+        if not _peer_is_us(conn):
+            conn.close()
             return
         try:
             conn.settimeout(0.5)
