@@ -440,7 +440,7 @@ class PanelTest(unittest.TestCase):
             if d is not None:
                 d.close()
 
-    def test_whats_new_is_offered_once_after_an_update(self):
+    def test_the_notes_open_by_themselves_once_after_an_update(self):
         import so_tray
         from so_tray import settings
         settings.save("SEEN_VERSION", "0.1.0")
@@ -448,18 +448,40 @@ class PanelTest(unittest.TestCase):
         try:
             p.show()
             self.assertTrue(p.offer_whats_new())
-            self.assertFalse(p.message_bar.isHidden())
-            self.assertFalse(p.toast_news.isHidden())
-            self.assertIn("updated to version %s" % so_tray.VERSION, p.toast.text())
+            self.assertTrue(p.news_dialog.isVisible())           # the notes themselves, not a line to notice
+            self.assertIn("Version %s" % so_tray.VERSION, p.news_view.toPlainText())
+            labels = [w.text() for w in p.news_dialog.findChildren(QtWidgets.QLabel)]
+            self.assertTrue(any("updated to version %s" % so_tray.VERSION in x for x in labels), labels)
             self.assertEqual(settings.load()["SEEN_VERSION"], so_tray.VERSION)
+            p.news_dialog.close()
             self.assertFalse(p.offer_whats_new())                # not again
             again = type(self.panel)(self.ctl)
             self.assertFalse(again.offer_whats_new())            # nor the next time it opens
             again.close()
-            p.toast_news.click()                                 # the button opens the notes
-            self.assertTrue(p.news_dialog.isVisible())
-            self.assertTrue(p.message_bar.isHidden())
+        finally:
+            p.close()
+            p.deleteLater()
+
+    def test_an_update_from_before_versions_were_recorded_shows_them_too(self):
+        from so_tray import settings
+        settings.save("THEME", "system")                         # a settings file from an older version: no SEEN_VERSION
+        p = type(self.panel)(self.ctl)
+        try:
+            self.assertTrue(p.offer_whats_new())
             p.news_dialog.close()
+        finally:
+            p.close()
+            p.deleteLater()
+
+    def test_a_fresh_install_is_not_told_what_is_new(self):
+        import so_tray
+        from so_tray import settings
+        self.assertFalse(os.path.exists(settings.path()))
+        p = type(self.panel)(self.ctl)
+        try:
+            self.assertFalse(p.offer_whats_new())
+            self.assertEqual(settings.load()["SEEN_VERSION"], so_tray.VERSION)
+            self.assertFalse(hasattr(p, "news_dialog"))
         finally:
             p.close()
             p.deleteLater()

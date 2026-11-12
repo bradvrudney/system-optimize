@@ -16,6 +16,7 @@ extension. Design notes: tray/docs/redesign.md.
 """
 
 import html
+import os
 import threading
 import time
 
@@ -437,7 +438,7 @@ class Panel(QtWidgets.QWidget):
         self.menu_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_btn.setAccessibleName("Menu")
         menu = QtWidgets.QMenu(self.menu_btn)
-        self.act_news = menu.addAction("What's new", self.open_whats_new)
+        self.act_news = menu.addAction("What's new", lambda: self.open_whats_new())
         self.act_about = menu.addAction("About system-optimize", self.open_about)
         menu.addSeparator()
         self.act_quit = menu.addAction("Quit", self.quit_requested.emit)
@@ -457,10 +458,6 @@ class Panel(QtWidgets.QWidget):
         self.toast_undo.clicked.connect(self._undo_last)
         self.toast_undo.hide()
         lay.addWidget(self.toast_undo)
-        self.toast_news = QtWidgets.QPushButton("What's new")
-        self.toast_news.clicked.connect(self.open_whats_new)
-        self.toast_news.hide()
-        lay.addWidget(self.toast_news)
         self.message_bar = bar
         bar.hide()
         self._toast_serial = 0
@@ -474,51 +471,57 @@ class Panel(QtWidgets.QWidget):
         self.toast.style().unpolish(self.toast)
         self.toast.style().polish(self.toast)
         self.toast_undo.hide()           # _on_applied shows it again after a change that went through
-        self.toast_news.hide()
         self.message_bar.show()
         keep = 12000 if error else 5000
         QtCore.QTimer.singleShot(keep, lambda: serial == self._toast_serial and self.message_bar.hide())
 
     def offer_whats_new(self):
-        """Once per version, after an update: a line at the bottom of the
-        window with a button, not a dialog in the way. True when offered."""
+        """The first time the window opens after an update, show the release
+        notes themselves, once per version. Not on a fresh install: nothing
+        is new to someone who has just arrived. True when shown."""
         from . import whatsnew
         seen = self.settings.get("SEEN_VERSION", "")
         if seen == VERSION:
             return False
+        # no version recorded: an update from before this existed if the
+        # settings file is already there, a fresh install if it is not
+        fresh = not seen and not os.path.exists(settings_mod.path())
         try:
             settings_mod.save("SEEN_VERSION", VERSION)
             self.settings["SEEN_VERSION"] = VERSION
         except (OSError, ValueError):
             pass
-        if not whatsnew.since(whatsnew.entries(whatsnew.load_text()), seen):
+        if fresh or not whatsnew.since(whatsnew.entries(whatsnew.load_text()), seen):
             return False
-        self.show_message("system-optimize was updated to version %s." % VERSION
-                          if seen else "Welcome to system-optimize %s." % VERSION, False)
-        self.toast_news.show()
-        self._toast_serial += 1
-        serial = self._toast_serial
-        QtCore.QTimer.singleShot(20000, lambda: serial == self._toast_serial and self.message_bar.hide())
+        self.open_whats_new(since=seen)
         return True
 
-    def open_whats_new(self):
+    def open_whats_new(self, since=None):
+        """The release notes. From the menu: all of them. After an update:
+        what is new since the version last seen, then the rest below."""
         from . import whatsnew
-        self.message_bar.hide()
         notes = whatsnew.entries(whatsnew.load_text())
         d = QtWidgets.QDialog(self)
         d.setWindowTitle("What's new in system-optimize")
-        d.resize(620, 640)
+        d.resize(640, 660)
         lay = QtWidgets.QVBoxLayout(d)
+        if since is not None:
+            head = _label("system-optimize was updated to version %s. Here is what changed." % VERSION, wrap=True)
+            lay.addWidget(head)
         view = QtWidgets.QTextBrowser(d)
         view.setOpenExternalLinks(True)
         view.setMarkdown(whatsnew.markdown(notes) if notes else "No release notes are installed with this copy.")
         lay.addWidget(view)
+        foot = QtWidgets.QHBoxLayout()
+        foot.addWidget(_label("Always available from Menu, What's new.", "muted"), 1)
         box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close, d)
         box.rejected.connect(d.reject)
-        lay.addWidget(box)
+        foot.addWidget(box)
+        lay.addLayout(foot)
         self.news_dialog = d
         self.news_view = view
         d.show()
+        d.raise_()
         return d
 
     def _on_applied(self, what):

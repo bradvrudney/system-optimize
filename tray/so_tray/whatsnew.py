@@ -1,6 +1,6 @@
 """Release notes written for the people who use the app, not for the
-people who build it: data/whats-new.md, shown from the dashboard's menu and
-offered once after an update.
+people who build it: data/whats-new.md, shown from the dashboard's menu, and
+by themselves the first time the dashboard opens after an update.
 
 The file is Markdown with one "## VERSION (DATE)" heading per release,
 newest first."""
