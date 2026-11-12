@@ -197,3 +197,22 @@ before. `tests/unit/installer.bats` covers `install.sh` and
 - Say which distribution and hardware you ran it on, and paste
   `system-optimize status` and the `apply -n` output.
 - Don't bump `VERSION`; that happens when a release is tagged.
+
+## Releasing
+
+The single file that users install with curl, and that `self-update`
+fetches, exists only as a release asset: until a release is published,
+`releases/latest/download/system-optimize` does not exist, and
+`self-update` of a single file refuses with "no system-optimize.sha256 is
+published with the latest release".
+
+1. Set `VERSION` (for example `2.0.1`) on `main` and let CI pass.
+2. `git tag v2.0.1 && git push origin v2.0.1` (the tag must be `v` plus
+   `VERSION`).
+3. `.github/workflows/release.yml` runs lint and the unit tests, builds
+   `system-optimize` from the tag and publishes it with
+   `system-optimize.sha256` as a GitHub release. A draft or a pre-release
+   is not "latest" and is not picked up.
+
+A fork that publishes its own releases is followed with
+`SELF_UPDATE_REPO=https://github.com/OWNER/system-optimize`.
