@@ -16,5 +16,7 @@ case "${1:-}" in
        printf '%s\n' "$4" > "$d/$2 $3" ;;
   range) [ -f "$d/$2 $3.range" ] || exit 0; echo flags; sed "s/.*/'&'/" "$d/$2 $3.range" ;;
   reset) rm -f "$d/$2 $3" ;;
+  list-keys) [ -e "$d/$2.schema" ] || ls "$d" 2>/dev/null | grep -q "^$2 " || { echo "No such schema “$2”" >&2; exit 1; }
+       ls "$d" 2>/dev/null | sed -n "s/^$2 \([^.]*\)$/\1/p" ;;
 esac
 exit "${STUB_EXIT_gsettings:-0}"

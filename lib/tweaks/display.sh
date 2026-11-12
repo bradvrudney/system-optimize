@@ -21,6 +21,8 @@
 #          Only the names the installed Mutter's schema still lists are
 #          added (gsettings range): from GNOME 48 VRR is a regular setting,
 #          and gsettings refuses the whole list when one name is unknown.
+#          GNOME 51 has no experimental-features key at all: both are
+#          built in, and the step reports itself as in place.
 #          Display modes are not changed on GNOME (Mutter keeps them in the
 #          user's monitors.xml and the Settings app is the safe way to pick
 #          one); the step reports each screen's refresh rate and the highest
@@ -207,8 +209,19 @@ _display_gnome_allowed() {
 
 _display_gnome() {
   local user="$1" cur want f items rc=0 missing="" regular="" allowed report
-  if ! has_cmd gsettings || ! cur=$(gsettings_get "$user" org.gnome.mutter experimental-features); then
-    step_skip "GNOME without org.gnome.mutter experimental-features (gsettings) for $user"
+  if ! has_cmd gsettings; then
+    step_skip "GNOME without gsettings for $user"
+    return 0
+  fi
+  if ! cur=$(gsettings_get "$user" org.gnome.mutter experimental-features); then
+    # Mutter 51 dropped the key: both are regular settings there. With the
+    # schema present and the key gone there is nothing to turn on, which is
+    # "on", not "skipped" (the tray would show the step as off for good).
+    if so_as_user "$user" gsettings list-keys org.gnome.mutter >/dev/null 2>&1; then
+      step_ok "fractional scaling and VRR are built into this GNOME; $(_display_gnome_report "$user")"
+    else
+      step_skip "GNOME without the org.gnome.mutter settings (gsettings) for $user"
+    fi
     return 0
   fi
   items=$(display_strv_items "$cur" | tr '\n' ' ')

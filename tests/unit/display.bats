@@ -202,6 +202,21 @@ EOF
   [ -z "$(snapshots)" ]
 }
 
+@test "display: GNOME 51 has no experimental-features key at all; both are built in, so the step is on" {
+  # Mutter 51 removed the key: fractional scaling and VRR are regular
+  # settings. "skipped" would show the step as off in the tray for good.
+  with_stub gsettings
+  as_desktop gnome wayland
+  gs_schema org.gnome.mutter
+  gs_put org.gnome.mutter dynamic-workspaces true
+  run "$SO" -y --only display
+  [ "$status" -eq 0 ]
+  assert_output_contains "fractional scaling and VRR are built into this GNOME"
+  assert_output_contains "1 ok, 0 updated, 0 skipped"
+  assert_not_called "gsettings set"
+  [ -z "$(snapshots)" ]
+}
+
 @test "display: X11, other desktops, no desktop user and containers are skipped" {
   with_stub gsettings
   run env SO_DESKTOP_USER="$(id -un)" SO_DESKTOP=gnome SO_SESSION_TYPE=x11 "$SO" -y --only display
