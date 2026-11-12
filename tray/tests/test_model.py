@@ -77,7 +77,11 @@ class SettingsTest(unittest.TestCase):
         p = os.path.join(tempfile.mkdtemp(), "x", "tray.conf")
         self.assertEqual(settings.load(p), settings.DEFAULTS)
         self.assertEqual(settings.DEFAULTS, {"THEME": "system", "EXPANDED": "", "RECORD_HISTORY": "1",
-                                             "PSI_ALERTS": "1", "HISTORY_SOURCE": "auto"})
+                                             "PSI_ALERTS": "1", "HISTORY_SOURCE": "auto", "WINDOW": ""})
+        settings.save("WINDOW", "1040x680,max", p)
+        with self.assertRaises(ValueError):
+            settings.save("WINDOW", "wide", p)
+        settings.save("WINDOW", "", p)
         settings.save("THEME", "dark", p)
         settings.save("EXPANDED", "memory,storage", p)
         settings.save("THEME", "light", p)
@@ -142,6 +146,21 @@ class CompileTest(unittest.TestCase):
     def test_everything_compiles(self):
         res = subprocess.run(["python3", "-m", "compileall", "-q", TRAY], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+
+
+class QuickRowsTest(unittest.TestCase):
+    """The quick view (tray menu, GNOME panel menu): the same rows from the
+    same inputs as the extension's quickRows (gnome-extension/tests)."""
+
+    def test_rows_match_the_shared_fixture(self):
+        import json
+        import os
+        from so_tray.model import quick_rows
+        path = os.path.join(os.path.dirname(__file__), "fixtures", "quick_rows.json")
+        with open(path, encoding="utf-8") as fh:
+            cases = json.load(fh)
+        for c in cases:
+            self.assertEqual(quick_rows(c["sample"], c["info"], c["proposal"], c["alerts"]), c["rows"], c["name"])
 
 
 if __name__ == "__main__":
