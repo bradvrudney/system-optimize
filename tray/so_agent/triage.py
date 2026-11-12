@@ -74,7 +74,7 @@ class Signal:
     """One thing to decide about. source: pressure | reading | journal.
 
     A journal line is trusted (facts["trusted"]) only when it came from the
-    kernel or from a process running as root: any user can write the words
+    kernel or from a root daemon the patterns know (trusted_entry): any user can write the words
     "Out of memory: Killed process" to the journal with logger(1), and that
     must not be able to produce a suggestion."""
 
@@ -273,6 +273,19 @@ def _run(argv, timeout=20):
     return res.returncode, res.stdout, res.stderr
 
 
+TRUSTED_ROOT_WRITERS = ("systemd-oomd", "earlyoom")
+
+
+def trusted_entry(entry):
+    """True for a journal entry whose words are the kernel's own, or those of
+    one of the few root daemons whose messages the patterns know. journald
+    sets these fields itself; a writer cannot forge them. Not every root
+    process: sudo, cron and others log text that users supply."""
+    if entry.get("_TRANSPORT") == "kernel":
+        return True
+    return entry.get("_UID") == "0" and entry.get("_COMM") in TRUSTED_ROOT_WRITERS
+
+
 def journal_signals(since="1h", run=None):
     """Warnings and worse from the journal since then, as Signals: the same
     message with different numbers counts once, with how often it came."""
@@ -292,12 +305,14 @@ def journal_signals(since="1h", run=None):
         if not isinstance(msg, str) or not msg.strip():
             continue
         text = " ".join(msg.split())[:MAX_LINE]
-        key = re.sub(r"0x[0-9a-f]+|\d+", "N", text, flags=re.I)     # the same message with other numbers or addresses
+        trusted = trusted_entry(entry)
+        # the same message with other numbers or addresses counts once; a
+        # trusted and an untrusted copy are kept apart, so neither lends the
+        # other its standing or its count
+        key = (trusted, re.sub(r"0x[0-9a-f]+|\d+", "N", text, flags=re.I))
         if key in seen:
             seen[key].count += 1
         elif len(seen) < MAX_SIGNALS:
-            # journald sets these two itself; a writer cannot forge them
-            trusted = entry.get("_TRANSPORT") == "kernel" or entry.get("_UID") == "0"
             seen[key] = Signal("journal", text, {"trusted": trusted})
     return list(seen.values())
 

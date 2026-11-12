@@ -68,8 +68,11 @@ A log line is untrusted text: any program can write "Out of memory: Killed
 process" to the journal.
 
 - A line can lead to a suggestion only when journald itself attributes it
-  to the kernel or to a process running as root. Anything else that matches
-  is reported as "review" and never acted on.
+  to the kernel, or to one of the few root daemons whose messages the
+  patterns know (systemd-oomd, earlyoom). Not any root process: sudo and
+  cron log text that users supply. Anything else that matches is reported
+  as "review" and never acted on, and a forged copy of a real message is
+  counted apart from the real one.
 - A line is only ever classified into one of six fixed kinds; the step
   suggested comes from the table in `triage.py`, from steps the CLI itself
   lists as off.

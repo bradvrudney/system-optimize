@@ -181,6 +181,28 @@ class JournalTest(unittest.TestCase):
         self.assertTrue(trusted[OOM])                           # the kernel said it
         self.assertFalse(trusted[IOERR])                        # a user process said it
 
+    def test_who_is_believed(self):
+        T = triage.trusted_entry
+        self.assertTrue(T({"_TRANSPORT": "kernel"}))
+        self.assertTrue(T({"_UID": "0", "_COMM": "systemd-oomd", "_TRANSPORT": "journal"}))
+        # root, but repeating words a user supplied (sudo logs the command line)
+        self.assertFalse(T({"_UID": "0", "_COMM": "sudo", "_TRANSPORT": "syslog"}))
+        self.assertFalse(T({"_UID": "1000", "_COMM": "systemd-oomd"}))        # a user process with that name
+        self.assertFalse(T({"SYSLOG_IDENTIFIER": "kernel", "_UID": "1000"}))  # a claimed identity is not a transport
+        self.assertFalse(T({}))
+
+    def test_a_forged_copy_neither_borrows_nor_lends_trust(self):
+        forged = json.dumps({"MESSAGE": OOM, "_UID": "1000", "_TRANSPORT": "syslog"})
+        real = json.dumps({"MESSAGE": OOM.replace("4242", "77"), "_TRANSPORT": "kernel"})
+        for raw in ("\n".join([forged] * 5 + [real]), "\n".join([real] + [forged] * 5)):     # either order
+            sigs = triage.journal_signals(run=lambda argv, timeout=20: (0, raw, ""))
+            self.assertEqual(sorted((s.facts["trusted"], s.count) for s in sigs), [(False, 5), (True, 1)])
+            f = triage.Triage().run(sigs)[0]
+            self.assertEqual(f.route, "auto")                   # because the kernel really said it once
+        only_forged = "\n".join([forged] * 5)
+        sigs = triage.journal_signals(run=lambda argv, timeout=20: (0, only_forged, ""))
+        self.assertEqual(triage.Triage().run(sigs)[0].route, "review")
+
     def test_no_journalctl_is_no_signals(self):
         self.assertEqual(triage.journal_signals(run=lambda argv, timeout=20: (127, "", "not found")), [])
         self.assertEqual(triage.journal_signals(since="1h; rm -rf /", run=lambda *a, **k: (0, "", "")), [])
