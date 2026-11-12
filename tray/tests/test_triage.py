@@ -423,6 +423,7 @@ class EventTest(unittest.TestCase):
         self.assertEqual((p["target"], p["source"]), ("limits", "triage"))
         notify.assert_called_once()
         self.assertIn("turn on limits", notify.call_args[0][0])
+        self.assertEqual(notify.call_args[1], {"page": "step:limits"})     # Review opens that step
         self.assertNotIn("nvme0n1", " ".join(notify.call_args[0]))        # no log text in a notification either
         with open(os.path.join(os.environ["XDG_STATE_HOME"], "system-optimize-tray", "agent", "runs.jsonl")) as fh:
             self.assertEqual(json.loads(fh.read().splitlines()[-1])["kind"], "triage-event")

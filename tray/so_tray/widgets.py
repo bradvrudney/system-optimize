@@ -28,6 +28,9 @@ class Card(QtWidgets.QFrame):
         self.c = colors
         self._clickable = clickable
         self._hover = False
+        self._attention = False       # an accent outline that pulses for a few seconds, then stays
+        self._pulse = 0.0
+        self._pulse_timer = None
         if clickable:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
             self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -48,7 +51,50 @@ class Card(QtWidgets.QFrame):
         p.setPen(QtGui.QPen(border, 1))
         p.setBrush(fill)
         p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+        if self._attention:
+            accent = QtGui.QColor(pal.color(R.Highlight))
+            wash = QtGui.QColor(accent)
+            wash.setAlpha(int(14 + 34 * self._pulse))
+            p.setPen(QtGui.QPen(accent, 2))
+            p.setBrush(wash)
+            p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1), 8, 8)
         p.end()
+
+    PULSE_SECONDS = 9             # then the outline stays, still: motion is for arriving, not for nagging
+
+    def set_attention(self, on, pulse=True):
+        """Mark this card as the thing to look at: an accent outline that
+        breathes for a few seconds and then holds."""
+        if on == self._attention and (not on or self._pulse_timer is not None or not pulse):
+            return
+        self._attention = bool(on)
+        if self._pulse_timer is not None:
+            self._pulse_timer.stop()
+            self._pulse_timer = None
+        self._pulse = 0.0
+        if on and pulse:
+            self._pulse_start = time.monotonic()
+            self._pulse_timer = QtCore.QTimer(self)
+            self._pulse_timer.timeout.connect(self._pulse_step)
+            self._pulse_timer.start(40)
+        self.update()
+
+    def attention(self):
+        return self._attention
+
+    def pulsing(self):
+        return self._pulse_timer is not None
+
+    def _pulse_step(self):
+        import math
+        t = time.monotonic() - self._pulse_start
+        if t >= self.PULSE_SECONDS:
+            self._pulse_timer.stop()
+            self._pulse_timer = None
+            self._pulse = 0.35
+        else:
+            self._pulse = 0.5 - 0.5 * math.cos(t * 2 * math.pi / 1.5)      # one breath every 1.5 s
+        self.update()
 
     def enterEvent(self, e):
         self._hover = True
@@ -252,6 +298,14 @@ class FeatureRow(Card):
             s = ElidedLabel(summary)
             s.setProperty("role", "muted")
             text.addWidget(s)
+        self.suggested = QtWidgets.QLabel("")       # "Suggested: ..." while a suggestion is about this step
+        self.suggested.setTextFormat(Qt.TextFormat.PlainText)
+        self.suggested.setWordWrap(True)
+        fs = self.suggested.font()
+        fs.setWeight(QtGui.QFont.Weight.DemiBold)
+        self.suggested.setFont(fs)
+        self.suggested.hide()
+        text.addWidget(self.suggested)
         lay.addLayout(text, 1)
         self.switch = Switch(colors)
         self.switch.setChecked(checked)
@@ -268,6 +322,12 @@ class FeatureRow(Card):
         lay.addWidget(chev)
         self.setToolTip(tip)
         self.clicked.connect(lambda: self.opened.emit(self.name))
+
+    def suggest(self, text, pulse=True):
+        """Show that a suggestion is about this step, and draw the eye to it."""
+        self.suggested.setText(text or "")
+        self.suggested.setVisible(bool(text))
+        self.set_attention(bool(text), pulse)
 
 
 class ScoreBar(QtWidgets.QWidget):

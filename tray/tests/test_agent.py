@@ -399,5 +399,38 @@ class MainTest(unittest.TestCase):
             self.assertEqual(os.stat(os.path.join(d, f)).st_mode & 0o777, 0o600)
 
 
+class NotifyTest(unittest.TestCase):
+    """A suggestion's notification leads to where it can be applied."""
+
+    def test_where_a_suggestion_can_be_acted_on(self):
+        self.assertEqual(Proposal("enable_step", "thp", "r").page(), "step:thp")
+        self.assertEqual(Proposal("disable_step", "io", "r").page(), "step:io")
+        self.assertEqual(Proposal("apply_profile", "gaming", "r").page(), "agent")
+        self.assertEqual(Proposal("undo_last_run", "", "r").page(), "agent")
+        self.assertEqual(Proposal("enable_step", "x; rm -rf", "r").page(), "agent")     # never an odd name
+
+    def test_review_opens_the_dashboard_on_that_page(self):
+        d = tempfile.mkdtemp()
+        log = os.path.join(d, "log")
+        for name, body in (("notify-send", 'printf "%%s\\n" "$*" >> "%s"; echo review' % log),
+                           ("system-optimize-tray", 'printf "tray %%s\\n" "$*" >> "%s"' % log)):
+            path = os.path.join(d, name)
+            write(path, "#!/bin/sh\n" + body + "\n")
+            os.chmod(path, 0o755)
+        with mock.patch.dict(os.environ, {"PATH": d + ":" + os.environ["PATH"]}):
+            agent_main.notify("Tuning suggestion: turn on thp", "why", page="step:thp")
+            for _ in range(100):
+                if "tray" in read(log):
+                    break
+                import time
+                time.sleep(0.02)
+            lines = read(log).splitlines()
+            self.assertIn("--action=review=Review", lines[0])
+            self.assertEqual(lines[1], "tray --step thp")
+            write(log, "")
+            agent_main.notify("Just so you know", "nothing to do")               # no page: no button, no wait
+            self.assertNotIn("--action", read(log))
+
+
 if __name__ == "__main__":
     unittest.main()

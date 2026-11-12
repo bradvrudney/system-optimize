@@ -244,6 +244,8 @@ class Panel(QtWidgets.QWidget):
         self.resource_name = None
         self._origin = "overview"
         self._page = "overview"
+        self._pulsed = None           # the suggestion whose row has already pulsed in this window
+        self._suggested_row = None
 
         root = QtWidgets.QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -513,15 +515,41 @@ class Panel(QtWidgets.QWidget):
         if target.startswith("resource:"):
             self.open_resource(target.split(":", 1)[1])
         elif target.startswith("step:"):
-            self.open_feature(target.split(":", 1)[1])
+            name = target.split(":", 1)[1]
+            prop = self.ctl.proposal() or {}
+            if prop.get("target") == name and prop.get("action") in ("enable_step", "disable_step"):
+                # a suggestion about it: straight to the step's page, where it
+                # can be applied; Back goes to the list, the row marked there
+                self._page = "settings"
+                self._pulsed = None
+            self.open_feature(name)
         elif target == "about":
             self.open_about()
         else:
             self.show_page(target)
 
+    def focus_step(self, name):
+        """Settings, scrolled to one step, its row drawing the eye."""
+        self.filter_edit.clear()
+        self._pulsed = None
+        self.show_page("settings")
+        self._on_info()
+        row = self._suggested_row or next((r for _h, rows in self._sections for r in rows if r.name == name), None)
+        if row is None:
+            return
+        row.set_attention(True)
+        area = self.pages["settings"].findChild(QtWidgets.QScrollArea)
+        QtCore.QTimer.singleShot(0, lambda: area.ensureWidgetVisible(row, 0, 120))
+        row.setFocus()
+
     def back(self):
         if self.stack.currentWidget() in (self.detail, self.resource, self.about):
+            came_from_step = self.stack.currentWidget() is self.detail and self._origin == "settings"
             self.show_page(self._origin)
+            prop = self.ctl.proposal() or {}
+            if came_from_step and prop.get("target") == self.detail_name and \
+                    prop.get("action") in ("enable_step", "disable_step"):
+                self.focus_step(self.detail_name)
 
     def show_dashboard(self):
         self.show_page("overview")
@@ -563,6 +591,12 @@ class Panel(QtWidgets.QWidget):
         return top
 
     # -- Overview ------------------------------------------------------
+    def _open_suggestion(self):
+        """Where the pending suggestion can be acted on."""
+        from so_agent.tools import page_for
+        prop = self.ctl.proposal() or {}
+        self.goto(page_for(prop.get("action"), prop.get("target")))
+
     def _info_card(self, title, page=None):
         card = Card(clickable=bool(page))
         cl = QtWidgets.QVBoxLayout(card)
@@ -633,7 +667,11 @@ class Panel(QtWidgets.QWidget):
         sl.setSpacing(8)
         self.steps_card, self.steps_label = self._info_card("Tuning steps", "settings")
         self.steps_card.setToolTip("Open Settings")
-        self.agent_card, self.proposal_label = self._info_card("Tuning agent suggests", "agent")
+        self.agent_card, self.proposal_label = self._info_card("Tuning agent suggests")
+        self.agent_card._clickable = True
+        self.agent_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.agent_card.setAccessibleName("Tuning agent suggests")
+        self.agent_card.clicked.connect(self._open_suggestion)
         self.power_card, self.power_label = self._info_card("Power")
         self.pressure_card, self.pressure_label = self._info_card("Pressure")
         self.pressure_card.setToolTip("Share of the last 10 seconds that tasks spent waiting for the CPU, for memory "
@@ -1031,6 +1069,9 @@ class Panel(QtWidgets.QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self._sections = []
+        prop = self.ctl.proposal() or {}
+        suggested = prop.get("target") if prop.get("action") in ("enable_step", "disable_step") else None
+        self._suggested_row = None
         summaries = {f["name"]: f.get("summary") or "" for f in info.get("features") or []}
         if not info.get("found"):
             self.features_box.addWidget(_label("system-optimize is not installed. Install it, then reopen this window.",
@@ -1055,8 +1096,15 @@ class Panel(QtWidgets.QWidget):
                 row.opened.connect(self.open_feature)
                 self.features_box.addWidget(row)
                 rows.append(row)
+                if name == suggested:
+                    # rebuilt on every refresh: pulse only when the suggestion is new to this window
+                    row.suggest("Suggested: %s. Open it to apply." % prop.get("summary", ""),
+                                pulse=self._pulsed != (name, prop.get("created")))
+                    self._suggested_row = row
             self._sections.append((head, rows))
         self._apply_filter()
+        if self._suggested_row is not None and self._page == "settings" and self.isVisible():
+            self._pulsed = (suggested, prop.get("created"))
         profiles = avail["profiles"]
         for w in (self.profile_label, self.profile_box, self.btn_profile):
             w.setVisible(bool(profiles))
@@ -1094,6 +1142,22 @@ class Panel(QtWidgets.QWidget):
         lay.addWidget(self.detail_title)
         self.detail_summary = _label("", "muted", wrap=True)
         lay.addWidget(self.detail_summary)
+        # the tuning agent's (or triage's) suggestion about this step, where it can be acted on
+        self.detail_proposal = Card()
+        dp = QtWidgets.QHBoxLayout(self.detail_proposal)
+        dp.setContentsMargins(12, 8, 10, 8)
+        self.detail_proposal_label = _label("", wrap=True)
+        self.detail_proposal_label.setTextFormat(Qt.TextFormat.PlainText)
+        dp.addWidget(self.detail_proposal_label, 1)
+        self.detail_dismiss = QtWidgets.QPushButton("Dismiss")
+        self.detail_dismiss.clicked.connect(self.dismiss_proposal)
+        dp.addWidget(self.detail_dismiss)
+        self.detail_approve = QtWidgets.QPushButton("Apply suggestion")
+        self.detail_approve.setDefault(True)
+        self.detail_approve.clicked.connect(self.approve_proposal)
+        dp.addWidget(self.detail_approve)
+        self.detail_proposal.hide()
+        lay.addWidget(self.detail_proposal)
         lay.addWidget(_label("What it does", "h2"))
         self.detail_doc = QtWidgets.QTextBrowser()
         self.detail_doc.setOpenExternalLinks(False)
@@ -1133,6 +1197,15 @@ class Panel(QtWidgets.QWidget):
         self.detail_switch.setEnabled(bool(entry and entry[3]) and not self.ctl.busy)
         self.detail_switch.setToolTip(entry[4] if entry else "")
         self.detail_switch.setAccessibleName(feat["title"])
+        prop = self.ctl.proposal()
+        mine = bool(prop) and prop.get("target") == name and prop.get("action") in ("enable_step", "disable_step")
+        self.detail_proposal.setVisible(mine)
+        self.detail_proposal.set_attention(mine, pulse=mine and not self.detail_proposal.attention())
+        if mine:
+            self.proposal = prop
+            self.detail_proposal_label.setText("Suggested: %s.\n%s" % (prop.get("summary", ""), prop.get("reason", "")))
+            for b in (self.detail_approve, self.detail_dismiss):
+                b.setEnabled(not self.ctl.busy)
         hist = self.ctl.history
         log = change_log(hist, step=name)
         points = [(_iso_to_ts(t), v) for t, v in score_series(hist)]
@@ -1366,6 +1439,7 @@ class Panel(QtWidgets.QWidget):
         self.proposal = self.ctl.proposal()
         pending = bool(self.proposal)
         self.agent_card.setVisible(pending)
+        self.agent_card.set_attention(pending, pulse=pending and not self.agent_card.attention())
         if pending:
             self.proposal_label.setText(self.proposal.get("summary", ""))
             self.chat_proposal_label.setText("Suggests: <b>%s</b><br>%s" % (
@@ -1477,6 +1551,8 @@ class Panel(QtWidgets.QWidget):
         from so_agent import store
         store.clear_proposal()
         self._refresh_agent()
+        if self.detail_name:
+            self._fill_detail(self.detail_name)
 
     # -- About ---------------------------------------------------------
     def _build_about(self):

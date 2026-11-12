@@ -341,7 +341,11 @@ export function quickRows(sample, info, proposal = null, alerts = []) {
             text = `${text.slice(0, QUICK_WARNING_CHARS - 1)}…`;
         add('warning', `⚠ ${text}`, 'overview');
     }
-    if (proposal?.summary)
-        add('suggestion', `Agent suggests: ${proposal.summary}`, 'agent');
+    if (proposal?.summary) {
+        // a step's own page when the suggestion is about one
+        const about = ['enable_step', 'disable_step'].includes(proposal.action) &&
+            /^[a-z][a-z0-9-]{0,31}$/.test(proposal.target ?? '');
+        add('suggestion', `Agent suggests: ${proposal.summary}`, about ? `step:${proposal.target}` : 'agent');
+    }
     return rows;
 }

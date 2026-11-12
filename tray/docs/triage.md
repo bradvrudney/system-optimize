@@ -90,8 +90,11 @@ the extension's monitor) starts `system-optimize-agent triage --event` the
 moment pressure crosses its threshold: once per episode, at most once
 every 30 minutes, shared between the two by a stamp file. An event look
 reads the last 15 minutes of the journal. A confident finding that meets a
-step that is off becomes the pending suggestion and a notification;
-otherwise it is silent and only logged. With `AGENT_TRIAGE_WAKE=1`,
+step that is off becomes the pending suggestion and a notification that
+stays on screen until answered. Its Review button opens the dashboard on
+that step's page, where the suggestion and Apply are highlighted; in the
+Settings list the step's row is marked and pulses for a few seconds.
+Otherwise it is silent and only logged. With `AGENT_TRIAGE_WAKE=1`,
 findings that triage could not turn into a suggestion are handed to the
 language model, unless memory is what is short: loading a model then
 would make it worse.

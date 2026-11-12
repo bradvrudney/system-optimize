@@ -241,6 +241,8 @@ class Indicator extends PanelMenu.Button {
         const args = [APP, '--panel'];
         if (page?.startsWith('resource:'))
             args.push('--resource', page.slice('resource:'.length));
+        else if (page?.startsWith('step:'))
+            args.push('--step', page.slice('step:'.length));
         else if (page)
             args.push('--page', page);
         let p;

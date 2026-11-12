@@ -42,10 +42,43 @@ def self_exe():
     return shutil.which("system-optimize-agent") or os.path.realpath(sys.argv[0])
 
 
-def notify(title, body):
-    if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "-a", "system-optimize", "-i", "system-optimize-tray", title, body],
-                       check=False, timeout=10, capture_output=True)
+NOTIFY_WAIT = 600          # seconds a notification's "Review" button is listened for
+
+
+def open_dashboard(page):
+    """Open the dashboard on a page ('step:thp', 'agent', ...), detached."""
+    exe = shutil.which("system-optimize-tray")
+    if not exe:
+        return False
+    args = ["--step", page.split(":", 1)[1]] if page.startswith("step:") else ["--page", page]
+    subprocess.Popen([exe, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return True
+
+
+def notify(title, body, page=None):
+    """A desktop notification. With a page, it has a Review button (and is
+    clickable) that opens the dashboard where the suggestion can be applied;
+    the call then waits, up to NOTIFY_WAIT, for that click."""
+    if not shutil.which("notify-send"):
+        return
+    base = ["notify-send", "-a", "system-optimize", "-i", "system-optimize-tray"]
+    if not page:
+        subprocess.run(base + [title, body], check=False, timeout=10, capture_output=True)
+        return
+    try:
+        # critical urgency: desktops keep the banner up until it is answered,
+        # instead of filing it away after a few seconds. Suggestions are rare
+        # (at most one is ever pending) and need a decision.
+        res = subprocess.run(base + ["--urgency=critical", "--wait", "--action=default=Review",
+                                     "--action=review=Review", title, body],
+                             check=False, timeout=NOTIFY_WAIT, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        return
+    if res.returncode != 0:         # an older notify-send without actions: a plain one
+        subprocess.run(base + [title, body], check=False, timeout=10, capture_output=True)
+    elif res.stdout.strip() in ("default", "review"):
+        open_dashboard(page)
 
 
 def build_parser():
@@ -131,7 +164,7 @@ def cmd_run(cfg, out, cli=None):
         out.write("proposal: %s\n" % reply.proposal.summary())
         if cfg["AGENT_NOTIFY"] == "1":
             notify("Tuning suggestion: %s" % reply.proposal.summary(),
-                   reply.proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+                   reply.proposal.reason, page=reply.proposal.page())
     return 0
 
 
@@ -223,7 +256,7 @@ def triage_event(cfg, out, cli, findings, proposal, saved):
         out.write("suggestion: %s\n" % proposal.summary())
         if cfg["AGENT_NOTIFY"] == "1":
             notify("Tuning suggestion: %s" % proposal.summary(),
-                   proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+                   proposal.reason, page=proposal.page())
     elif (findings and cfg["AGENT_TRIAGE_WAKE"] == "1" and not store.load_proposal()
           and not any(f.kind == "memory" for f in findings)):
         agent, c = make_agent(cfg, cli, keep_alive=0)
@@ -236,7 +269,7 @@ def triage_event(cfg, out, cli, findings, proposal, saved):
                 out.write("suggestion: %s\n" % reply.proposal.summary())
                 if cfg["AGENT_NOTIFY"] == "1":
                     notify("Tuning suggestion: %s" % reply.proposal.summary(),
-                           reply.proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+                           reply.proposal.reason, page=reply.proposal.page())
         except LlmError as exc:
             entry.update(ok=False, error=str(exc))
         finally:

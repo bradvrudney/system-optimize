@@ -1,5 +1,6 @@
 """What the tray menu shows, worked out without Qt so it can be tested."""
 
+import re
 import time
 
 from .monitor import PSI_THRESHOLDS
@@ -430,5 +431,9 @@ def quick_rows(sample, info, proposal=None, alerts=()):
             text = text[:QUICK_WARNING_CHARS - 1] + "…"
         add("warning", "⚠ " + text, "overview")
     if proposal and proposal.get("summary"):
-        add("suggestion", "Agent suggests: %s" % proposal["summary"], "agent")
+        page = "agent"       # a step's own page when the suggestion is about one (tools.page_for)
+        if proposal.get("action") in ("enable_step", "disable_step") and \
+                re.match(r"^[a-z][a-z0-9-]{0,31}$", str(proposal.get("target") or "")):
+            page = "step:" + proposal["target"]
+        add("suggestion", "Agent suggests: %s" % proposal["summary"], page)
     return rows
