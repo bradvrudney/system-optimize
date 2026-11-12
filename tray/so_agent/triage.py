@@ -244,6 +244,36 @@ class Triage:
         return sorted(out, key=lambda f: (-f.severity, f.route != "auto", -f.count, f.kind))
 
 
+MODEL_ROOM_MB = 3072      # free memory a decision model needs to load (it takes about 2 GB)
+
+
+def memory_short(signals, available_mb=None):
+    """True when this is no time to load a model: pressure, a reading or the
+    kernel says memory is what is short, or too little of it is free. A
+    model takes about 2 GB to load, and loading one into a machine that is
+    out of memory makes the problem it was asked about worse."""
+    if available_mb is not None and available_mb < MODEL_ROOM_MB:
+        return True
+    rules = Rules()
+    for s in signals:
+        d = rules.decide(s)
+        if d is not None and d.kind == "memory" and d.route == "auto":
+            return True
+    return False
+
+
+def available_mb(path="/proc/meminfo"):
+    """MemAvailable in MB, or None."""
+    try:
+        with open(path, encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def recommend(finding, info):
     """The suggestion for a confident finding: turn on the first step for
     its kind that system-optimize lists and reports as off. None otherwise."""

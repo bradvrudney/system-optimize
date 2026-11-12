@@ -170,6 +170,47 @@ class DigestTest(unittest.TestCase):
         self.assertIn("nothing that needs attention", triage.digest([]))
 
 
+class MemoryGuardTest(unittest.TestCase):
+    """A decision model takes about 2 GB to load: never while memory is what is short."""
+
+    def test_when_memory_is_short(self):
+        calm = [Signal("journal", NOISE), kernel(IOERR)]
+        self.assertFalse(triage.memory_short(calm, available_mb=20000))
+        self.assertFalse(triage.memory_short(calm))                       # unknown free memory: the signals decide
+        self.assertTrue(triage.memory_short(calm, available_mb=1500))     # too little free to load it
+        self.assertTrue(triage.memory_short([kernel(OOM)], available_mb=20000))
+        self.assertTrue(triage.memory_short(triage.signals_from_sample(sample(memory=30.0)), available_mb=20000))
+        self.assertTrue(triage.memory_short(triage.signals_from_sample(sample(mem_percent=96.0)), available_mb=20000))
+        # words anyone could have logged do not switch the model off
+        self.assertFalse(triage.memory_short([Signal("journal", OOM)], available_mb=20000))
+
+    def test_laya_is_not_loaded_then(self):
+        import sys
+        import types
+        from unittest import mock
+        cfg = {"AGENT_TRIAGE": "laya"}
+        fake = types.ModuleType("laya")
+        fake.Agent = lambda *a, **k: None
+        with mock.patch.dict(sys.modules, {"laya": fake}):
+            t, note = agent_main.make_triage(cfg, [kernel(IOERR)], 20000)
+            self.assertIsNotNone(t.text_model)
+            self.assertEqual(note, "")
+            t, note = agent_main.make_triage(cfg, [kernel(OOM)], 20000)
+            self.assertIsNone(t.text_model)
+            self.assertIn("memory is short", note)
+            t, note = agent_main.make_triage(cfg, [], 900)
+            self.assertIsNone(t.text_model)
+        self.assertIsNone(agent_main.make_triage({"AGENT_TRIAGE": "rules"}, [kernel(OOM)], 900)[0].text_model)
+
+    def test_available_memory_is_read_from_meminfo(self):
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "meminfo")
+        with open(p, "w") as fh:
+            fh.write("MemTotal:       98637824 kB\nMemAvailable:   36864000 kB\n")
+        self.assertEqual(triage.available_mb(p), 36000)
+        self.assertIsNone(triage.available_mb(os.path.join(d, "missing")))
+
+
 class JournalTest(unittest.TestCase):
     def test_lines_are_deduplicated_cut_and_counted(self):
         raw = "\n".join(json.dumps({"MESSAGE": m, "PRIORITY": "4", "_UID": "1000"}) for m in

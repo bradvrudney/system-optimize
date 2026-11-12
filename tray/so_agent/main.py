@@ -145,7 +145,8 @@ def cmd_run(cfg, out, cli=None):
         task += " Do not run a benchmark."
     if cfg["AGENT_TRIAGE"] != "off":
         try:        # the quick look first: the model gets facts already decided, not raw logs
-            task += "\n\n" + triagemod.digest(make_triage(cfg)[0].run(gather_signals("1d")))
+            day = gather_signals("1d")
+            task += "\n\n" + triagemod.digest(make_triage(cfg, day, triagemod.available_mb())[0].run(day))
         except Exception:
             pass
     try:
@@ -168,9 +169,11 @@ def cmd_run(cfg, out, cli=None):
     return 0
 
 
-def make_triage(cfg):
+def make_triage(cfg, signals=(), available_mb=None):
     """(Triage, a note about the backend or '')."""
     if cfg["AGENT_TRIAGE"] == "laya":
+        if triagemod.memory_short(signals, available_mb):
+            return triagemod.Triage(), "memory is short: the Laya model was not loaded, rules only"
         try:
             import laya  # noqa: F401
         except ImportError:
@@ -196,8 +199,10 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
     if not triagemod.SINCE_RE.match(args.since):
         print("system-optimize-agent: --since takes a number and s, m, h or d (30m, 1h, 1d)", file=sys.stderr)
         return 2
-    t, note = make_triage(cfg)
-    findings = t.run(signals if signals is not None else gather_signals(args.since))
+    if signals is None:
+        signals = gather_signals(args.since)
+    t, note = make_triage(cfg, signals, triagemod.available_mb())
+    findings = t.run(signals)
     proposal = None
     if findings:
         info = (cli or _cli()).describe()

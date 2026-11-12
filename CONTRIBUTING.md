@@ -200,6 +200,10 @@ before. `tests/unit/installer.bats` covers `install.sh` and
 
 ## Releasing
 
+A tray release also needs an entry in `tray/data/whats-new.md`, written for
+the people who use it (what they will notice, in plain words; no internals).
+A test fails when the newest entry is not for the current tray version.
+
 The single file that users install with curl, and that `self-update`
 fetches, exists only as a release asset: until a release is published,
 `releases/latest/download/system-optimize` does not exist, and

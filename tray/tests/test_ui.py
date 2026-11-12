@@ -425,6 +425,45 @@ class PanelTest(unittest.TestCase):
         again.close()
         again.deleteLater()
 
+    def test_whats_new_is_in_the_menu_and_shows_this_versions_notes(self):
+        import so_tray
+        d = None
+        try:
+            self.panel.act_news.trigger()
+            d = self.panel.news_dialog
+            self.assertTrue(d.isVisible())
+            text = self.panel.news_view.toPlainText()
+            self.assertIn("Version %s" % so_tray.VERSION, text)
+            self.assertIn("Undo is always one click away", text)
+            self.assertLess(text.index("Version %s" % so_tray.VERSION), text.index("Version 0.1.0"))   # newest first
+        finally:
+            if d is not None:
+                d.close()
+
+    def test_whats_new_is_offered_once_after_an_update(self):
+        import so_tray
+        from so_tray import settings
+        settings.save("SEEN_VERSION", "0.1.0")
+        p = type(self.panel)(self.ctl)
+        try:
+            p.show()
+            self.assertTrue(p.offer_whats_new())
+            self.assertFalse(p.message_bar.isHidden())
+            self.assertFalse(p.toast_news.isHidden())
+            self.assertIn("updated to version %s" % so_tray.VERSION, p.toast.text())
+            self.assertEqual(settings.load()["SEEN_VERSION"], so_tray.VERSION)
+            self.assertFalse(p.offer_whats_new())                # not again
+            again = type(self.panel)(self.ctl)
+            self.assertFalse(again.offer_whats_new())            # nor the next time it opens
+            again.close()
+            p.toast_news.click()                                 # the button opens the notes
+            self.assertTrue(p.news_dialog.isVisible())
+            self.assertTrue(p.message_bar.isHidden())
+            p.news_dialog.close()
+        finally:
+            p.close()
+            p.deleteLater()
+
     def test_quit_is_in_the_menu(self):
         asked = []
         self.panel.quit_requested.connect(lambda: asked.append(1))

@@ -437,6 +437,7 @@ class Panel(QtWidgets.QWidget):
         self.menu_btn.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_btn.setAccessibleName("Menu")
         menu = QtWidgets.QMenu(self.menu_btn)
+        self.act_news = menu.addAction("What's new", self.open_whats_new)
         self.act_about = menu.addAction("About system-optimize", self.open_about)
         menu.addSeparator()
         self.act_quit = menu.addAction("Quit", self.quit_requested.emit)
@@ -456,6 +457,10 @@ class Panel(QtWidgets.QWidget):
         self.toast_undo.clicked.connect(self._undo_last)
         self.toast_undo.hide()
         lay.addWidget(self.toast_undo)
+        self.toast_news = QtWidgets.QPushButton("What's new")
+        self.toast_news.clicked.connect(self.open_whats_new)
+        self.toast_news.hide()
+        lay.addWidget(self.toast_news)
         self.message_bar = bar
         bar.hide()
         self._toast_serial = 0
@@ -469,9 +474,52 @@ class Panel(QtWidgets.QWidget):
         self.toast.style().unpolish(self.toast)
         self.toast.style().polish(self.toast)
         self.toast_undo.hide()           # _on_applied shows it again after a change that went through
+        self.toast_news.hide()
         self.message_bar.show()
         keep = 12000 if error else 5000
         QtCore.QTimer.singleShot(keep, lambda: serial == self._toast_serial and self.message_bar.hide())
+
+    def offer_whats_new(self):
+        """Once per version, after an update: a line at the bottom of the
+        window with a button, not a dialog in the way. True when offered."""
+        from . import whatsnew
+        seen = self.settings.get("SEEN_VERSION", "")
+        if seen == VERSION:
+            return False
+        try:
+            settings_mod.save("SEEN_VERSION", VERSION)
+            self.settings["SEEN_VERSION"] = VERSION
+        except (OSError, ValueError):
+            pass
+        if not whatsnew.since(whatsnew.entries(whatsnew.load_text()), seen):
+            return False
+        self.show_message("system-optimize was updated to version %s." % VERSION
+                          if seen else "Welcome to system-optimize %s." % VERSION, False)
+        self.toast_news.show()
+        self._toast_serial += 1
+        serial = self._toast_serial
+        QtCore.QTimer.singleShot(20000, lambda: serial == self._toast_serial and self.message_bar.hide())
+        return True
+
+    def open_whats_new(self):
+        from . import whatsnew
+        self.message_bar.hide()
+        notes = whatsnew.entries(whatsnew.load_text())
+        d = QtWidgets.QDialog(self)
+        d.setWindowTitle("What's new in system-optimize")
+        d.resize(620, 640)
+        lay = QtWidgets.QVBoxLayout(d)
+        view = QtWidgets.QTextBrowser(d)
+        view.setOpenExternalLinks(True)
+        view.setMarkdown(whatsnew.markdown(notes) if notes else "No release notes are installed with this copy.")
+        lay.addWidget(view)
+        box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close, d)
+        box.rejected.connect(d.reject)
+        lay.addWidget(box)
+        self.news_dialog = d
+        self.news_view = view
+        d.show()
+        return d
 
     def _on_applied(self, what):
         # an Undo right where the change was made; the list is on Changes

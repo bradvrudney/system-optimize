@@ -30,6 +30,11 @@ They are certain or silent.
 forward pass. It is asked the same three questions about the lines the
 rules do not know.
 
+It is loaded only for the look itself (about 2 GB of RAM and 2 GB of GPU
+memory, 13 to 20 seconds) and never while memory is what is short: when
+pressure, a reading or the kernel says so, or less than 3 GB is free, the
+look uses the rules alone and says why.
+
 ## The benchmark (2026-11-12)
 
 45 hand-labelled log lines (7 memory, 10 disk, 5 thermal, 4 CPU, 4 network,
