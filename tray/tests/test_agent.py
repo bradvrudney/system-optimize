@@ -144,6 +144,33 @@ class ScheduleTest(unittest.TestCase):
         self.assertEqual(tab["text"], "MAILTO=me\n")
 
 
+    def test_next_run_reports_a_crontab_schedule(self):
+        line = "0 0 * * * /x/agent run --scheduled " + schedule.CRON_TAG
+        crond = {"up": True}
+
+        def run(argv, stdin=None):
+            if argv[0] == "systemctl":
+                return 1, "", "Failed to connect to bus"
+            if argv == ["crontab", "-l"]:
+                return 0, line + "\n", ""
+            if argv[0] == "pgrep":
+                return (0 if crond["up"] and argv[-1] == "crond" else 1), "", ""
+            return 0, "", ""
+        with mock.patch.object(schedule.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertEqual(schedule.next_run(run=run), "by cron (0 0 * * *)")
+            crond["up"] = False
+            self.assertIn("no cron daemon is running", schedule.next_run(run=run))
+
+    def test_next_run_none_without_a_schedule(self):
+        def run(argv, stdin=None):
+            if argv[0] == "systemctl":
+                return 0, "n/a\n", ""
+            if argv == ["crontab", "-l"]:
+                return 1, "", "no crontab for me"
+            return 0, "", ""
+        with mock.patch.object(schedule.shutil, "which", lambda n: "/usr/bin/" + n):
+            self.assertIsNone(schedule.next_run(run=run))
+
 class ToolsTest(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("FAKE_SO_MODE", None)
@@ -246,8 +273,14 @@ class FakeServer(BaseHTTPRequestHandler):
             if body["model"] == "broken":
                 self._send({"error": "model not found"}, 404)
                 return
+            if body["model"] == "thinker":      # qwen3 with think off still leaks its reasoning sometimes
+                self._send({"message": {"role": "assistant", "tool_calls": [],
+                                        "content": "Okay, let me see. The user asked...</think>\n\nTurn on tuned."}})
+                return
             self._send({"message": {"role": "assistant", "content": "",
                                     "tool_calls": [{"function": {"name": "get_status", "arguments": {}}}]}})
+        elif self.path == "/v1/chat/completions" and body["model"] == "thinker":
+            self._send({"choices": [{"message": {"content": "<think>hmm</think>\n\nhi", "tool_calls": []}}]})
         elif self.path == "/v1/chat/completions":
             self._send({"choices": [{"message": {"content": "hi", "tool_calls": [
                 {"id": "1", "type": "function", "function": {"name": "list_options", "arguments": "{\"a\": 1}"}}]}}]})
@@ -282,6 +315,12 @@ class LlmClientTest(unittest.TestCase):
             Ollama(self.url, "broken").chat([], [])
         with self.assertRaises(LlmError):
             Ollama("http://127.0.0.1:9", "x", timeout=2).chat([], [])
+
+    def test_a_models_thinking_is_kept_out_of_the_answer(self):
+        r = Ollama(self.url, "thinker").chat([{"role": "user", "content": "x"}], [])
+        self.assertEqual(r["content"], "Turn on tuned.")
+        r = OpenAICompatible(self.url, "thinker").chat([{"role": "user", "content": "x"}], [])
+        self.assertEqual(r["content"], "hi")
 
     def test_openai_compatible(self):
         o = OpenAICompatible(self.url, "local")

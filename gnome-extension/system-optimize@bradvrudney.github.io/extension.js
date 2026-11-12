@@ -343,12 +343,29 @@ class Indicator extends PanelMenu.Button {
     // The full dashboard (feature details, history, agent chat, About) is
     // the Qt panel, opened as a normal window.
     _openPanel(extra) {
+        let p;
         try {
-            const p = Gio.Subprocess.new(['system-optimize-tray', '--panel', ...extra], Gio.SubprocessFlags.NONE);
-            p.wait_async(null, null);
+            p = Gio.Subprocess.new(['system-optimize-tray', '--panel', ...extra], Gio.SubprocessFlags.STDERR_PIPE);
         } catch (e) {
             Main.notify('system-optimize', `Cannot open the dashboard: ${e.message}`);
+            return;
         }
+        // The dashboard runs until it is closed. When it exits with an error
+        // instead (no Qt for Python, say), its last line of stderr says why;
+        // without this the click would do nothing visible.
+        p.communicate_utf8_async(null, this._cancellable, (proc, res) => {
+            let err = '';
+            try {
+                [, , err] = proc.communicate_utf8_finish(res);
+            } catch (e) {
+                if (e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    return;
+            }
+            if (proc.get_if_exited() && !proc.get_successful()) {
+                const why = (err ?? '').trim().split('\n').pop() || `exit status ${proc.get_exit_status()}`;
+                Main.notify('system-optimize', `Cannot open the dashboard: ${why}`);
+            }
+        });
     }
 
     destroy() {

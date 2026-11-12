@@ -249,6 +249,75 @@ class PanelTest(unittest.TestCase):
         self.assertTrue(self.wait(lambda: "Performance Co-Pilot" in self.panel.res_note.text()))
         self.assertEqual(self.panel.res_stats["avg"].text(), "12%")
 
+    def test_dashboard_fits_its_width_with_a_long_agent_status(self):
+        # "model qwen3:4b · schedule @daily · next Wed 2026-11-04 00:00:43 EST" must
+        # wrap: one label wider than the window pushes every tile past the right edge
+        self.ctl.agent_factory = lambda: None
+        self.panel._next_run = "Wed 2026-11-04 00:00:43 EST"
+        self.panel._refresh_agent()
+        self.panel.show()
+        self.app.processEvents()
+        self.assertIn("next Wed 2026-11-04 00:00:43 EST", self.panel.agent_status.text())
+        area = self.panel.dash.findChild(QtWidgets.QScrollArea)
+        self.assertLessEqual(area.widget().minimumSizeHint().width(), area.viewport().width())
+
+    def test_dashboard_fits_its_width_with_a_long_version_string(self):
+        # the single-file build reports "system-optimize 2.0.1 (git 0ecd836-dirty, single file)"
+        self.ctl.info["version"] = "system-optimize 2.0.1 (git 0ecd836-dirty, single file)"
+        self.panel._on_info()
+        self.panel.show()
+        self.app.processEvents()
+        area = self.panel.dash.findChild(QtWidgets.QScrollArea)
+        self.assertLessEqual(area.widget().minimumSizeHint().width(), area.viewport().width())
+        self.assertEqual(self.panel.version_label.toolTip(), self.ctl.info["version"])  # the whole string is a hover away
+
+    def test_dashboard_fits_its_width_with_long_step_titles(self):
+        # system-optimize 2.0.1 titles its steps in full sentences ("Leave build and
+        # cache folders out of desktop search"); a row must wrap them, not widen the panel
+        for f in self.ctl.info["features"]:
+            f["title"] = "Leave build and cache folders out of desktop search and indexing"
+        self.panel.toggle_category("memory")
+        self.panel.show()
+        self.app.processEvents()
+        area = self.panel.dash.findChild(QtWidgets.QScrollArea)
+        self.assertLessEqual(area.widget().minimumSizeHint().width(), area.viewport().width())
+        from so_tray.widgets import FeatureRow
+        rows = self.panel.findChildren(FeatureRow)
+        self.assertTrue(rows)
+        for row in rows:                 # the whole title shows, on more lines if need be
+            title = row.findChildren(QtWidgets.QLabel)[0]
+            self.assertIn("indexing", title.text())
+            self.assertGreaterEqual(title.height(), title.heightForWidth(title.width()))
+
+    def test_opening_a_resource_page_clears_the_last_pages_numbers_while_loading(self):
+        import threading
+        from so_tray.history import History
+        h = History()
+        t = time.time() - 3 * 86400
+        while t < time.time():
+            h.record({"temperature": {"cpu": 61}}, ts=t)
+            t += 3600
+        h.close()
+        gate = threading.Event()
+
+        class SlowPcp:       # reading Performance Co-Pilot's archives can take most of a minute
+            def load(self):
+                gate.wait(10)
+                hist = History(":memory:")
+                hist.record({"cpu": {"percent": 12}}, ts=time.time() - 86400)
+                return hist, time.time() - 86400
+        self.ctl.pcp = SlowPcp()
+        self.panel.open_resource("cpu_temp")
+        self.assertTrue(self.wait(lambda: self.panel.res_stats["avg"].text() == "61 °C"))
+        self.panel.open_resource("cpu")
+        self.app.processEvents()
+        self.assertEqual(self.panel.res_title.text(), "CPU load")
+        self.assertEqual(self.panel.res_stats["avg"].text(), "–")
+        self.assertEqual(self.panel.res_stats["since"].text(), "–")
+        self.assertIn("Loading", self.panel.res_note.text())
+        gate.set()
+        self.assertTrue(self.wait(lambda: self.panel.res_stats["avg"].text() == "12%"))
+
     def test_turning_recording_off(self):
         from so_tray import settings
         from so_tray.history import Recorder
