@@ -57,10 +57,47 @@ What that means:
   "review" only, and rules stay the default. It adds nothing a suggestion
   is built on.
 
-What might change this, untested: Laya can be fitted and calibrated on
-labelled rows in seconds. A few hundred labelled journal lines would be
-the next experiment; `Laya(trusted=True)` is the switch for a model that
-has earned it.
+## Fitting Laya to labelled lines (2026-11-12)
+
+Laya can be fitted and calibrated on labelled rows without training the
+reader. The vega reader was fitted on 365 rows: 245 synthetic lines from
+52 message families in the formats the kernel and common services really
+use, and 120 real journal noise lines. Fitting took 40 seconds on the GPU.
+Tested on lines it had not seen:
+
+| Test set | Before fitting | After fitting |
+|---|---|---|
+| 45 hand-labelled lines (their message types were in the fit) | 18 right; 9 of 13 sure answers wrong | 41 right; 2 of 39 sure answers wrong |
+| 66 lines from 14 message families held out of the fit | 24 right; 21 of 36 sure answers wrong | 36 right; 12 of 34 sure answers wrong |
+| 150 real journal noise lines | 125 right | 149 right; 1 sure answer wrong |
+
+Fitting teaches it the message types it is shown, and makes it a very
+good noise filter. On message types it has not been shown, which is the
+only place it could add to the rules, a third of its confident answers
+are still wrong. Rules reach the same result on known types for nothing
+(the corpus became a test fixture and the rules now recognise all 129 of
+its problem lines with no false positives, and 43 of the 45 hand-labelled
+lines). So the conclusion stands: rules are the default, and Laya's
+answers are review-only. Two things would be needed to change that:
+labelled lines from far more message families than one person can write,
+and a way to keep a fitted model between runs (laya 0.4.31 saves the
+calibration but showed no obvious way to save fitted heads).
+
+## Live: when a pressure episode begins
+
+The process that watches the machine all day (the tray icon, or on GNOME
+the extension's monitor) starts `system-optimize-agent triage --event` the
+moment pressure crosses its threshold: once per episode, at most once
+every 30 minutes, shared between the two by a stamp file. An event look
+reads the last 15 minutes of the journal. A confident finding that meets a
+step that is off becomes the pending suggestion and a notification that
+stays on screen until answered. Its Review button opens the dashboard on
+that step's page, where the suggestion and Apply are highlighted; in the
+Settings list the step's row is marked and pulses for a few seconds.
+Otherwise it is silent and only logged. With `AGENT_TRIAGE_WAKE=1`,
+findings that triage could not turn into a suggestion are handed to the
+language model, unless memory is what is short: loading a model then
+would make it worse.
 
 ## Why the log text cannot steer anything
 

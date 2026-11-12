@@ -9,7 +9,7 @@
               "warnings": [{"id": "scx-ananicy", "text": "An scx scheduler and ananicy-cpp are both running; they fight over task priorities, so stop one of them before trusting the numbers."}]},
    "info": {"found": true, "profile": "dev", "warnings": [],
             "features": [{"name": "sysctl", "applied": true}, {"name": "io", "applied": true}, {"name": "display", "applied": false}, {"name": "psd", "applied": null}]},
-   "proposal": {"summary": "turn on tuned", "reason": "x"},
+   "proposal": {"action": "enable_step", "target": "tuned", "summary": "turn on tuned", "reason": "x"},
    "alerts": ["Memory pressure: tasks stalled waiting for memory 12% of the last 10 s (alert at 10%)."],
    "rows": [
      {"kind": "readout", "text": "CPU 3% · 3.4 GHz · 62°C", "page": "resource:cpu"},
@@ -20,7 +20,7 @@
      {"kind": "status", "text": "2 of 3 steps on · profile dev", "page": "settings"},
      {"kind": "warning", "text": "⚠ An scx scheduler and ananicy-cpp are both running; they fight over task priorities, so st…", "page": "overview"},
      {"kind": "warning", "text": "⚠ Memory pressure: tasks stalled waiting for memory 12% of the last 10 s (alert at 10%).", "page": "overview"},
-     {"kind": "suggestion", "text": "Agent suggests: turn on tuned", "page": "agent"}
+     {"kind": "suggestion", "text": "Agent suggests: turn on tuned", "page": "step:tuned"}
    ]},
   {"name": "a laptop on battery, an old CLI that reports no state",
    "sample": {"cpu": {"percent": null}, "memory": {"percent": 50, "total_mb": 16384, "used_mb": 8192},

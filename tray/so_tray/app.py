@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 from . import APP_ID, EXTENSION_UUID, VERSION
-from .cli import Cli
+from .cli import NAME_RE, Cli
 from .history import METRICS
 from .monitor import Monitor, summary
 from .panel import Controller, Panel
@@ -230,6 +230,9 @@ class App(QtCore.QObject):
             from .history import Recorder
             recorder = Recorder()
         self.ctl.recorder = recorder
+        if tray:                            # the icon runs all day: it starts the agent's quick look
+            from .trigger import TriageTrigger
+            self.ctl.trigger = TriageTrigger()
         if os.environ.get("SO_ROOT", "/") == "/":
             from .pcp import PcpSource
             self.ctl.pcp = PcpSource()
@@ -354,6 +357,7 @@ def build_parser():
                    help="open the full view on this page")
     p.add_argument("--chat", action="store_true", help="open the full view on the tuning agent (--page agent)")
     p.add_argument("--resource", choices=sorted(METRICS), help="open the full view on a resource's history")
+    p.add_argument("--step", metavar="NAME", help="open the full view on a tuning step's page")
     p.add_argument("--autostart", action="store_true",
                    help="start the tray icon without opening the full view (what the login autostart runs)")
     p.add_argument("--quit", action="store_true", help="quit the running instance")
@@ -368,6 +372,11 @@ def main(argv=None):
         send_to_running({"quit": True})
         return 0
     page = "agent" if args.chat else ("resource:" + args.resource) if args.resource else args.page
+    if args.step:
+        if not NAME_RE.match(args.step):
+            print("system-optimize-tray: not a step name: %s" % args.step, file=sys.stderr)
+            return 2
+        page = "step:" + args.step
     extension = not args.force and gnome_extension_enabled()
     if args.autostart:
         if extension or send_to_running({"ping": True}):

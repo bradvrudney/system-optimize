@@ -431,6 +431,67 @@ class PanelTest(unittest.TestCase):
         self.panel.act_quit.trigger()
         self.assertEqual(asked, [1])
 
+    def test_a_suggestion_leads_to_its_step_pulsing_in_the_list(self):
+        from so_agent import store
+        self.ctl.agent_factory = lambda: None
+        store.save_proposal({"action": "enable_step", "target": "tuned", "summary": "turn on tuned",
+                             "reason": "Triage saw a cpu problem (serious, 1 time): a CPU was stuck or stalled."})
+        p = self.panel
+        p.show()
+        p.goto("step:tuned")                                  # what the notification's Review button opens
+        self.app.processEvents()
+        # straight to the step's page, the suggestion and Apply drawing the eye
+        self.assertIs(p.stack.currentWidget(), p.detail)
+        self.assertEqual(p.detail_name, "tuned")
+        self.assertFalse(p.detail_proposal.isHidden())
+        self.assertTrue(p.detail_proposal.pulsing())
+        self.assertIn("a CPU was stuck or stalled", p.detail_proposal_label.text())
+        self.assertFalse(p.detail_approve.isHidden())
+        # Back: the list, scrolled to the step, its row marked and pulsing
+        p.back()
+        self.app.processEvents()
+        self.assertIs(p.stack.currentWidget(), p.pages["settings"])
+        row = next(r for _h, rows in p._sections for r in rows if r.name == "tuned")
+        self.assertTrue(row.attention())
+        self.assertTrue(row.pulsing())
+        self.assertIn("Suggested: turn on tuned", row.suggested.text())
+        others = [r for _h, rows in p._sections for r in rows if r.name != "tuned"]
+        self.assertFalse(any(r.attention() for r in others))
+        area = p.pages["settings"].findChild(QtWidgets.QScrollArea)
+        self.assertFalse(row.visibleRegion().isEmpty())       # scrolled into view
+        self.assertTrue(area.isAncestorOf(row))
+        # a refresh rebuilds the rows: still marked, but it does not start pulsing again
+        p._on_info()
+        row2 = next(r for _h, rows in p._sections for r in rows if r.name == "tuned")
+        self.assertTrue(row2.attention())
+        self.assertFalse(row2.pulsing())
+        # one click further: the step's page, with the suggestion and Apply
+        row2.opened.emit("tuned")
+        self.assertIs(p.stack.currentWidget(), p.detail)
+        self.assertFalse(p.detail_proposal.isHidden())
+        self.assertIn("a CPU was stuck or stalled", p.detail_proposal_label.text())
+        p.detail_dismiss.click()
+        self.assertIsNone(store.load_proposal())
+        self.assertTrue(p.detail_proposal.isHidden())
+        p.show_page("settings")
+        p._on_info()
+        self.assertFalse(any(r.attention() for _h, rows in p._sections for r in rows))
+
+    def test_the_pulse_stops_and_the_outline_stays(self):
+        from so_tray.widgets import Card
+        c = Card()
+        c.PULSE_SECONDS = 0.15
+        c.set_attention(True)
+        self.assertTrue(c.pulsing())
+        self.assertTrue(self.wait(lambda: not c.pulsing(), timeout=3))
+        self.assertTrue(c.attention())
+        c.set_attention(False)
+        self.assertFalse(c.attention())
+
+    def test_a_step_without_a_suggestion_opens_its_own_page(self):
+        self.panel.goto("step:sysctl")
+        self.assertIs(self.panel.stack.currentWidget(), self.panel.detail)
+
     def test_turning_recording_off(self):
         from so_tray import settings
         from so_tray.history import Recorder

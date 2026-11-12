@@ -212,7 +212,8 @@ You can also ask it questions from the dashboard or its chat page.
 Before the model is asked anything, a quick **triage** looks at pressure,
 readings and the journal's warnings with plain rules, and suggests a step
 when a known problem (the OOM killer, I/O errors, a stalled CPU) meets a
-step that is off: `system-optimize-agent triage` (see
+step that is off. It runs with the daily agent run and whenever a pressure
+episode begins (at most every 30 minutes): `system-optimize-agent triage` (see
 [docs/triage.md](docs/triage.md), which also has the benchmark of the
 optional Laya decision model).
 
@@ -256,6 +257,7 @@ Settings live in `~/.config/system-optimize/agent.conf` (over
 | `AGENT_BENCHMARK` | `1` | let a scheduled run benchmark first |
 | `AGENT_NOTIFY` | `1` | desktop notification for a new suggestion |
 | `AGENT_TRIAGE` | `rules` | the quick look before the model: `rules`, `laya` (optional, experimental) or `off` |
+| `AGENT_TRIAGE_WAKE` | `0` | `1`: when a pressure episode leaves triage unsure, ask the model (never while memory is short) |
 | `AGENT_KEEP_ALIVE` | `5m` | how long chat keeps the model loaded |
 
 Applying suggestions without asking is deliberately not built: it would need

@@ -55,18 +55,33 @@ STEPS = {
 # meaning is not in doubt. The description, never the log line, is what a
 # suggestion's reason and the language model are given.
 PATTERNS = tuple((re.compile(p, re.I), k, s, d) for p, k, s, d in (
-    (r"out of memory: killed process|oom-kill|invoked oom-killer|systemd-oomd.* killed|earlyoom.*(sending|killing)",
+    (r"out of memory: killed process|oom-kill|invoked oom-killer|killed by the oom killer|"
+     r"systemd-oomd.* killed|earlyoom.*(sending|killing)",
      "memory", 2, "a process was killed because memory ran out"),
-    (r"page allocation failure|allocation stall", "memory", 1, "the kernel struggled to find free memory"),
-    (r"i/o error, dev|buffer i/o error|critical medium error|(ext4|xfs|btrfs)[- ](fs )?error|btrfs error|"
-     r"nvme.*(timeout|i/o \d+ qid)|ata\d+.*(failed command|hard resetting link)",
-     "disk", 2, "a drive or filesystem reported an I/O error or timed out"),
+    (r"page allocation (failure|stalls)|allocation stall|zram\d*: decompression failed",
+     "memory", 1, "the kernel struggled to find or recover memory"),
+    (r"i/o error, dev|buffer i/o error|critical medium error|sense key : medium error|tag#\d+ failed result|"
+     r"(ext4|xfs|btrfs)[- ](fs )?error|btrfs (error|critical)|csum failed|corrupt leaf|"
+     r"remounting filesystem read-only|detected aborted journal|"
+     r"xfs.*(metadata i/o error|corruption detected)|"
+     r"nvme\d*.*(timeout|controller is down)|"
+     r"ata\d+(\.\d+)?: (failed command|hard resetting link|exception emask)|"
+     r"md/raid.*disk failure|super_written gets error",
+     "disk", 2, "a drive or filesystem reported an I/O error, corruption or a timeout"),
+    (r"currently unreadable \(pending\) sectors|reallocated_sector_ct changed",
+     "disk", 1, "a drive's SMART data shows failing sectors"),
     (r"task .* blocked for more than \d+ seconds", "disk", 1, "a task was blocked for minutes, usually waiting on storage"),
-    (r"temperature above threshold|cpu clock throttled|thermal.*critical|critical temperature reached",
-     "thermal", 1, "the CPU was throttled for heat"),
-    (r"soft lockup|hard lockup|rcu_(sched|preempt).*(stall|self-detected)|sched: rt throttling activated",
-     "cpu", 2, "a CPU was stuck or stalled"),
+    (r"critical temperature reached|thermal.*critical", "thermal", 2, "a part reached its critical temperature"),
+    (r"temperature (is )?above threshold|cpu clock (is )?throttled|slowdown temperature|thermal (alert|emergency)",
+     "thermal", 1, "the CPU or another part was throttled or alarmed for heat"),
+    (r"soft lockup|hard lockup|rcu_(sched|preempt).*(stall|self-detected)", "cpu", 2, "a CPU was stuck or stalled"),
+    (r"sched: rt throttling activated", "cpu", 1, "real-time tasks used all the CPU time they are allowed"),
+    (r"machine check events logged|\[hardware error\].*machine check", "cpu", 2, "the CPU reported a hardware error"),
+    (r"marking clocksource .* as unstable|tsc found unstable", "cpu", 1, "the CPU's clock source was marked unstable"),
     (r"netdev watchdog.*transmit queue.*timed out", "network", 2, "a network adapter's transmit queue timed out"),
+    (r"microcode sw error detected|hardware error detected\. restarting|detected hardware unit hang|"
+     r"firmware crashed|rtl_rxtx_empty_cond|nf_conntrack: table full",
+     "network", 1, "a network adapter or its firmware failed, or the connection table filled"),
 ))
 
 

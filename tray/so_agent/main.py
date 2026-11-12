@@ -42,10 +42,43 @@ def self_exe():
     return shutil.which("system-optimize-agent") or os.path.realpath(sys.argv[0])
 
 
-def notify(title, body):
-    if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "-a", "system-optimize", "-i", "system-optimize-tray", title, body],
-                       check=False, timeout=10, capture_output=True)
+NOTIFY_WAIT = 600          # seconds a notification's "Review" button is listened for
+
+
+def open_dashboard(page):
+    """Open the dashboard on a page ('step:thp', 'agent', ...), detached."""
+    exe = shutil.which("system-optimize-tray")
+    if not exe:
+        return False
+    args = ["--step", page.split(":", 1)[1]] if page.startswith("step:") else ["--page", page]
+    subprocess.Popen([exe, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return True
+
+
+def notify(title, body, page=None):
+    """A desktop notification. With a page, it has a Review button (and is
+    clickable) that opens the dashboard where the suggestion can be applied;
+    the call then waits, up to NOTIFY_WAIT, for that click."""
+    if not shutil.which("notify-send"):
+        return
+    base = ["notify-send", "-a", "system-optimize", "-i", "system-optimize-tray"]
+    if not page:
+        subprocess.run(base + [title, body], check=False, timeout=10, capture_output=True)
+        return
+    try:
+        # critical urgency: desktops keep the banner up until it is answered,
+        # instead of filing it away after a few seconds. Suggestions are rare
+        # (at most one is ever pending) and need a decision.
+        res = subprocess.run(base + ["--urgency=critical", "--wait", "--action=default=Review",
+                                     "--action=review=Review", title, body],
+                             check=False, timeout=NOTIFY_WAIT, capture_output=True, text=True)
+    except subprocess.TimeoutExpired:
+        return
+    if res.returncode != 0:         # an older notify-send without actions: a plain one
+        subprocess.run(base + [title, body], check=False, timeout=10, capture_output=True)
+    elif res.stdout.strip() in ("default", "review"):
+        open_dashboard(page)
 
 
 def build_parser():
@@ -70,6 +103,8 @@ def build_parser():
     t.add_argument("--since", default="1h", help="how far back in the journal: 30m, 1h, 1d (default 1h)")
     t.add_argument("--propose", action="store_true", help="save a suggestion for a confident finding")
     t.add_argument("--json", action="store_true")
+    t.add_argument("--event", action="store_true",
+                   help="what the tray runs when a pressure episode begins: save and announce a suggestion")
     s = sub.add_parser("schedule")
     s.add_argument("expr", nargs="?")
     m = sub.add_parser("model")
@@ -129,7 +164,7 @@ def cmd_run(cfg, out, cli=None):
         out.write("proposal: %s\n" % reply.proposal.summary())
         if cfg["AGENT_NOTIFY"] == "1":
             notify("Tuning suggestion: %s" % reply.proposal.summary(),
-                   reply.proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+                   reply.proposal.reason, page=reply.proposal.page())
     return 0
 
 
@@ -168,9 +203,11 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
         info = (cli or _cli()).describe()
         proposal = next((p for p in (triagemod.recommend(f, info) for f in findings) if p), None)
     saved = False
-    if proposal and args.propose and not store.load_proposal():
+    if proposal and (args.propose or args.event) and not store.load_proposal():
         store.save_proposal(dict(proposal.to_dict(), source="triage"))
         saved = True
+    if args.event:
+        return triage_event(cfg, out, cli, findings, proposal, saved)
     backend = "laya" if t.text_model is not None else "rules"
     if args.json:
         out.write(json.dumps({"findings": [f.to_dict() for f in findings],
@@ -189,7 +226,8 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
             "confident" if f.route == "auto" else "unsure: worth asking the agent", f.backend))
         out.write("    %s\n" % f.what)
         for line in f.evidence:
-            out.write("    log: %s\n" % line)
+            if line != f.what:      # a pressure or reading signal is its own description
+                out.write("    log: %s\n" % line)
     if proposal:
         out.write("\nSuggestion: %s\n  %s\n" % (proposal.summary(), proposal.reason))
         if saved:
@@ -198,6 +236,47 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
             out.write("Not saved: another suggestion is already pending.\n")
         else:
             out.write("Run again with --propose to save it for approval.\n")
+    return 0
+
+
+EVENT_TASK = """A pressure episode just began on this machine and the quick triage could not settle it. Look at the
+options and the history, and propose one change only if it clearly addresses what triage found; otherwise say in
+one sentence that no change is needed. Do not run a benchmark: the machine is busy."""
+
+
+def triage_event(cfg, out, cli, findings, proposal, saved):
+    """The unattended look when a pressure episode begins. A confident
+    finding that meets a step that is off becomes the pending suggestion
+    and a notification. With AGENT_TRIAGE_WAKE=1, findings that triage
+    could not turn into a suggestion go to the language model, unless
+    memory is what is short (loading a model then would make it worse)."""
+    entry = {"kind": "triage-event", "ok": True, "findings": [f.to_dict() for f in findings],
+             "proposal": proposal.to_dict() if saved else None}
+    if saved:
+        out.write("suggestion: %s\n" % proposal.summary())
+        if cfg["AGENT_NOTIFY"] == "1":
+            notify("Tuning suggestion: %s" % proposal.summary(),
+                   proposal.reason, page=proposal.page())
+    elif (findings and cfg["AGENT_TRIAGE_WAKE"] == "1" and not store.load_proposal()
+          and not any(f.kind == "memory" for f in findings)):
+        agent, c = make_agent(cfg, cli, keep_alive=0)
+        try:
+            reply = agent.ask(EVENT_TASK + "\n\n" + triagemod.digest(findings))
+            entry["text"] = reply.text[:500]
+            if reply.proposal:
+                store.save_proposal(dict(reply.proposal.to_dict(), source="agent"))
+                entry["proposal"] = reply.proposal.to_dict()
+                out.write("suggestion: %s\n" % reply.proposal.summary())
+                if cfg["AGENT_NOTIFY"] == "1":
+                    notify("Tuning suggestion: %s" % reply.proposal.summary(),
+                           reply.proposal.reason, page=reply.proposal.page())
+        except LlmError as exc:
+            entry.update(ok=False, error=str(exc))
+        finally:
+            c.unload()
+    store.log_run(entry)
+    if not entry.get("proposal"):
+        out.write("%d finding%s, no suggestion\n" % (len(findings), "" if len(findings) == 1 else "s"))
     return 0
 
 
