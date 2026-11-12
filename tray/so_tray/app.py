@@ -241,6 +241,7 @@ class App(QtCore.QObject):
         self.panel.text_requested.connect(self.show_text)
         self.panel.quit_requested.connect(self.quit)
         self.dialogs = []
+        self._news_offered = False
         self.tray = None
         self.listener = None
         if tray:
@@ -316,6 +317,9 @@ class App(QtCore.QObject):
         handle = self.panel.windowHandle()
         if handle is not None:
             handle.requestActivate()
+        if not self._news_offered:          # once per start: is this the first look since an update?
+            self._news_offered = True
+            QtCore.QTimer.singleShot(1200, self.panel.offer_whats_new)
 
     def listen(self, path=None):
         self.listener = Listener(path, self)

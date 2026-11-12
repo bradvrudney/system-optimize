@@ -72,7 +72,8 @@ A sidebar with five pages; `Ctrl+1` to `Ctrl+5` switch between them.
 - **Agent** (when the optional tuning agent is installed, below): the chat,
   the model choice, and the pending suggestion with Apply and Dismiss.
 
-About (the open-source projects system-optimize builds on; one list,
+What's new (release notes in plain words, `data/whats-new.md`; offered
+once at the bottom of the window after an update), About (the open-source projects system-optimize builds on; one list,
 `data/credits.json`, kept in step with `docs/tools.md` by a test) and Quit
 are in the Menu button at the bottom of the sidebar.
 
