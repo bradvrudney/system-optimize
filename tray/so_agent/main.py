@@ -187,8 +187,9 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
         out.write("%s: %s, seen %d time%s (%s, %s)\n" % (
             f.kind, triagemod.SEVERITIES[f.severity], f.count, "" if f.count == 1 else "s",
             "confident" if f.route == "auto" else "unsure: worth asking the agent", f.backend))
+        out.write("    %s\n" % f.what)
         for line in f.evidence:
-            out.write("    %s\n" % line)
+            out.write("    log: %s\n" % line)
     if proposal:
         out.write("\nSuggestion: %s\n  %s\n" % (proposal.summary(), proposal.reason))
         if saved:

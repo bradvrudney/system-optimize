@@ -64,8 +64,18 @@ has earned it.
 
 ## Why the log text cannot steer anything
 
-A log line is untrusted text. It is only ever classified into one of six
-fixed kinds; the step suggested comes from the table in `triage.py`, from
-steps the CLI itself lists as off. The model's answers are checked (an
-unknown kind, an abstention or an odd score becomes "none" or "review"),
-and the digest given to the language model marks the examples as data.
+A log line is untrusted text: any program can write "Out of memory: Killed
+process" to the journal.
+
+- A line can lead to a suggestion only when journald itself attributes it
+  to the kernel or to a process running as root. Anything else that matches
+  is reported as "review" and never acted on.
+- A line is only ever classified into one of six fixed kinds; the step
+  suggested comes from the table in `triage.py`, from steps the CLI itself
+  lists as off.
+- Its text reaches neither the suggestion's reason nor the language model:
+  both get the problem in fixed words ("a drive or filesystem reported an
+  I/O error"). The line itself is shown only in the triage report you read,
+  marked `log:`.
+- A decision model's answers are checked (an unknown kind, an abstention
+  or an odd score becomes "none" or "review").
