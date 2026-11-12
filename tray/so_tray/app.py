@@ -230,6 +230,9 @@ class App(QtCore.QObject):
             from .history import Recorder
             recorder = Recorder()
         self.ctl.recorder = recorder
+        if tray:                            # the icon runs all day: it starts the agent's quick look
+            from .trigger import TriageTrigger
+            self.ctl.trigger = TriageTrigger()
         if os.environ.get("SO_ROOT", "/") == "/":
             from .pcp import PcpSource
             self.ctl.pcp = PcpSource()

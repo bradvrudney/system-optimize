@@ -70,6 +70,8 @@ def build_parser():
     t.add_argument("--since", default="1h", help="how far back in the journal: 30m, 1h, 1d (default 1h)")
     t.add_argument("--propose", action="store_true", help="save a suggestion for a confident finding")
     t.add_argument("--json", action="store_true")
+    t.add_argument("--event", action="store_true",
+                   help="what the tray runs when a pressure episode begins: save and announce a suggestion")
     s = sub.add_parser("schedule")
     s.add_argument("expr", nargs="?")
     m = sub.add_parser("model")
@@ -168,9 +170,11 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
         info = (cli or _cli()).describe()
         proposal = next((p for p in (triagemod.recommend(f, info) for f in findings) if p), None)
     saved = False
-    if proposal and args.propose and not store.load_proposal():
+    if proposal and (args.propose or args.event) and not store.load_proposal():
         store.save_proposal(dict(proposal.to_dict(), source="triage"))
         saved = True
+    if args.event:
+        return triage_event(cfg, out, cli, findings, proposal, saved)
     backend = "laya" if t.text_model is not None else "rules"
     if args.json:
         out.write(json.dumps({"findings": [f.to_dict() for f in findings],
@@ -189,7 +193,8 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
             "confident" if f.route == "auto" else "unsure: worth asking the agent", f.backend))
         out.write("    %s\n" % f.what)
         for line in f.evidence:
-            out.write("    log: %s\n" % line)
+            if line != f.what:      # a pressure or reading signal is its own description
+                out.write("    log: %s\n" % line)
     if proposal:
         out.write("\nSuggestion: %s\n  %s\n" % (proposal.summary(), proposal.reason))
         if saved:
@@ -198,6 +203,47 @@ def cmd_triage(args, cfg, out, cli=None, signals=None):
             out.write("Not saved: another suggestion is already pending.\n")
         else:
             out.write("Run again with --propose to save it for approval.\n")
+    return 0
+
+
+EVENT_TASK = """A pressure episode just began on this machine and the quick triage could not settle it. Look at the
+options and the history, and propose one change only if it clearly addresses what triage found; otherwise say in
+one sentence that no change is needed. Do not run a benchmark: the machine is busy."""
+
+
+def triage_event(cfg, out, cli, findings, proposal, saved):
+    """The unattended look when a pressure episode begins. A confident
+    finding that meets a step that is off becomes the pending suggestion
+    and a notification. With AGENT_TRIAGE_WAKE=1, findings that triage
+    could not turn into a suggestion go to the language model, unless
+    memory is what is short (loading a model then would make it worse)."""
+    entry = {"kind": "triage-event", "ok": True, "findings": [f.to_dict() for f in findings],
+             "proposal": proposal.to_dict() if saved else None}
+    if saved:
+        out.write("suggestion: %s\n" % proposal.summary())
+        if cfg["AGENT_NOTIFY"] == "1":
+            notify("Tuning suggestion: %s" % proposal.summary(),
+                   proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+    elif (findings and cfg["AGENT_TRIAGE_WAKE"] == "1" and not store.load_proposal()
+          and not any(f.kind == "memory" for f in findings)):
+        agent, c = make_agent(cfg, cli, keep_alive=0)
+        try:
+            reply = agent.ask(EVENT_TASK + "\n\n" + triagemod.digest(findings))
+            entry["text"] = reply.text[:500]
+            if reply.proposal:
+                store.save_proposal(dict(reply.proposal.to_dict(), source="agent"))
+                entry["proposal"] = reply.proposal.to_dict()
+                out.write("suggestion: %s\n" % reply.proposal.summary())
+                if cfg["AGENT_NOTIFY"] == "1":
+                    notify("Tuning suggestion: %s" % reply.proposal.summary(),
+                           reply.proposal.reason + "\nOpen system-optimize to approve or dismiss it.")
+        except LlmError as exc:
+            entry.update(ok=False, error=str(exc))
+        finally:
+            c.unload()
+    store.log_run(entry)
+    if not entry.get("proposal"):
+        out.write("%d finding%s, no suggestion\n" % (len(findings), "" if len(findings) == 1 else "s"))
     return 0
 
 

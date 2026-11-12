@@ -117,6 +117,7 @@ class Controller(QtCore.QObject):
         self.monitor = monitor
         self.agent_factory = agent_factory  # () -> Agent, or None when not installed
         self.recorder = None                # history.Recorder when this process keeps resource averages
+        self.trigger = None                 # trigger.TriageTrigger when this process is the all-day watcher
         self.pcp = None                     # pcp.PcpSource: Performance Co-Pilot's archives, when installed
         self.info = {"found": False, "features": [], "capabilities": []}
         self.history = {"benchmarks": [], "changes": [], "available": False}
@@ -168,6 +169,8 @@ class Controller(QtCore.QObject):
         if self.recorder and self.sample:
             self.recorder.add(self.sample)
         fresh = self.pressure.update(self.sample)
+        if fresh and self.trigger:          # a pressure episode began: the agent's quick look
+            self.trigger.fire()
         # psi-notify already notifies about the same thing: don't double up
         if self.psi_alerts and not (self.sample or {}).get("pressure_notifier"):
             for text in fresh:

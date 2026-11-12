@@ -73,6 +73,20 @@ class RulesTest(unittest.TestCase):
         f = triage.Triage().run([Signal("journal", OOM)])[0]
         self.assertIsNone(triage.recommend(f, info(mglru=False)))
 
+    def test_the_labelled_corpus(self):
+        # tests/fixtures/triage_lines.json: synthetic lines in the formats the kernel and common
+        # services really use (built for the Laya fitting experiment, docs/triage.md)
+        with open(os.path.join(os.path.dirname(__file__), "fixtures", "triage_lines.json"), encoding="utf-8") as fh:
+            rows = json.load(fh)
+        rules = triage.Rules()
+        self.assertGreater(len(rows), 150)
+        for row in rows:
+            d = rules.decide(kernel(row["text"]))
+            got = d.kind if d else "none"
+            self.assertEqual(got, row["kind"], row["text"])        # never a wrong kind, never noise as a problem
+            if d:
+                self.assertEqual(d.severity, row["severity"], row["text"])
+
     def test_an_unknown_line_is_not_a_decision(self):
         self.assertIsNone(triage.Rules().decide(Signal("journal", NOISE)))
 
@@ -298,6 +312,151 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(json.loads(text), {"findings": [], "proposal": None, "backend": "rules"})
         rc, text = self.run_triage(signals=[])
         self.assertIn("Nothing needs attention", text)
+
+
+class TriggerTest(unittest.TestCase):
+    """The all-day watcher starts the quick look when a pressure episode begins."""
+
+    def trigger(self, now, which=lambda name: "/usr/bin/" + name):
+        from so_tray.trigger import TriageTrigger
+        self.spawned = []
+        self.path = getattr(self, "path", None) or os.path.join(tempfile.mkdtemp(), "state", "triage-trigger")
+        return TriageTrigger(spawn=self.spawned.append, clock=lambda: now[0], which=which, path=self.path)
+
+    def test_fires_once_then_waits_half_an_hour_across_processes(self):
+        now = [1_800_000_000]
+        t = self.trigger(now)
+        self.assertTrue(t.fire())
+        self.assertEqual(self.spawned, [["/usr/bin/system-optimize-agent", "triage", "--event", "--since", "15m"]])
+        now[0] += 600
+        self.assertFalse(t.fire())
+        other = self.trigger(now)                   # the tray and the extension's monitor share the stamp
+        self.assertFalse(other.fire())
+        now[0] += 1300
+        self.assertTrue(other.fire())
+
+    def test_no_agent_installed_is_no_look(self):
+        t = self.trigger([1_800_000_000], which=lambda name: None)
+        self.assertFalse(t.fire())
+        self.assertEqual(self.spawned, [])
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_the_recording_monitor_fires_when_pressure_crosses_its_threshold(self):
+        import argparse
+        from so_tray import backend
+
+        class Trigger:
+            fired = 0
+
+            def fire(self):
+                Trigger.fired += 1
+
+        class Mon:
+            def __init__(self, root="/"):
+                self.i = 0
+
+            def cpu(self):
+                return {}
+
+            def sample(self):
+                self.i += 1
+                return sample(io=60.0 if self.i >= 2 else 0.0)
+        real, backend.Monitor = backend.Monitor, Mon
+        try:
+            mon_out = io.StringIO()
+            args = argparse.Namespace(record=True, watch=False, interval=0.0)
+            backend.cmd_monitor(args, mon_out, recorder=False, trigger=Trigger())     # calm: nothing
+            self.assertEqual(Trigger.fired, 0)
+            calls = {"n": 0}
+
+            class Watch(argparse.Namespace):
+                @property
+                def watch(self):
+                    calls["n"] += 1
+                    return calls["n"] <= 3
+            backend.cmd_monitor(Watch(record=True, interval=0.0), mon_out, recorder=False, trigger=Trigger())
+            self.assertEqual(Trigger.fired, 1)       # once for the episode, not once per sample
+        finally:
+            backend.Monitor = real
+
+    def test_the_tray_fires_too(self):
+        from so_tray.panel import Controller
+        try:
+            from so_tray.qt import QtWidgets  # noqa: F401
+        except ImportError:
+            self.skipTest("no Qt binding")
+
+        class Mon:
+            def sample(self):
+                return sample(memory=30.0)
+        fired = []
+        ctl = Controller(cli=None, monitor=Mon())
+        ctl.trigger = type("T", (), {"fire": lambda self: fired.append(1)})()
+        ctl.tick()
+        ctl.tick()
+        self.assertEqual(fired, [1])
+
+
+class EventTest(unittest.TestCase):
+    def setUp(self):
+        os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp()
+        os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+        os.environ["FAKE_SO_MODE"] = "new"
+        d = tempfile.mkdtemp()
+        self.cli = Cli(path=FAKE_CLI, pkexec=stub(d, "pkexec"), helper="HELPER")
+
+    def run_event(self, signals, **conf):
+        from unittest import mock
+        from so_agent import config
+        for k, v in conf.items():
+            config.write_user_setting(k, v)
+        out = io.StringIO()
+        with mock.patch.object(agent_main, "notify") as notify, \
+                mock.patch.dict(triage.STEPS, {"disk": ("io", "limits")}):
+            rc = agent_main.main(["triage", "--event", "--since", "15m"], out=out, cli=self.cli, signals=signals)
+        return rc, out.getvalue(), notify
+
+    def test_a_confident_finding_becomes_the_pending_suggestion_and_a_notification(self):
+        rc, text, notify = self.run_event([kernel(IOERR)])
+        self.assertEqual(rc, 0)
+        p = store.load_proposal()
+        self.assertEqual((p["target"], p["source"]), ("limits", "triage"))
+        notify.assert_called_once()
+        self.assertIn("turn on limits", notify.call_args[0][0])
+        self.assertNotIn("nvme0n1", " ".join(notify.call_args[0]))        # no log text in a notification either
+        with open(os.path.join(os.environ["XDG_STATE_HOME"], "system-optimize-tray", "agent", "runs.jsonl")) as fh:
+            self.assertEqual(json.loads(fh.read().splitlines()[-1])["kind"], "triage-event")
+
+    def test_nothing_to_suggest_is_silent(self):
+        rc, text, notify = self.run_event([triage.signals_from_sample(sample(cpu=80.0))[0]])
+        self.assertIn("1 finding, no suggestion", text)
+        notify.assert_not_called()
+        self.assertIsNone(store.load_proposal())
+        rc, text, notify = self.run_event([kernel(IOERR)], AGENT_NOTIFY="0")
+        notify.assert_not_called()
+
+    def test_the_model_is_woken_only_when_asked_and_never_when_memory_is_short(self):
+        from unittest import mock
+        from so_agent.agent import AgentReply
+
+        class FakeAgent:
+            asked = []
+
+            def ask(self, text):
+                FakeAgent.asked.append(text)
+                return AgentReply("No change is needed.")
+        client = mock.Mock()
+        cpu = [triage.signals_from_sample(sample(cpu=80.0))[0]]
+        with mock.patch.object(agent_main, "make_agent", return_value=(FakeAgent(), client)):
+            self.run_event(cpu)                                        # AGENT_TRIAGE_WAKE is off by default
+            self.assertEqual(FakeAgent.asked, [])
+            self.run_event(cpu, AGENT_TRIAGE_WAKE="1")
+            self.assertEqual(len(FakeAgent.asked), 1)
+            self.assertIn("cpu: a problem", FakeAgent.asked[0])
+            self.assertIn("Do not run a benchmark", FakeAgent.asked[0])
+            client.unload.assert_called_once()
+            self.run_event([triage.signals_from_sample(sample(memory=30.0))[0]], AGENT_TRIAGE_WAKE="1")
+            self.assertEqual(len(FakeAgent.asked), 1)                  # memory is short: do not load a model
 
 
 if __name__ == "__main__":
