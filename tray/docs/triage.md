@@ -69,7 +69,7 @@ process" to the journal.
 
 - A line can lead to a suggestion only when journald itself attributes it
   to the kernel, or to one of the few root daemons whose messages the
-  patterns know (systemd-oomd, earlyoom). Not any root process: sudo and
+  patterns know (systemd-oomd, earlyoom), and those only about memory. Not any root process: sudo and
   cron log text that users supply. Anything else that matches is reported
   as "review" and never acted on, and a forged copy of a real message is
   counted apart from the real one.

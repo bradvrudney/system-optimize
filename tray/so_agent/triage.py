@@ -121,7 +121,8 @@ class Rules:
         for pattern, kind, severity, what in PATTERNS:
             if pattern.search(signal.text):
                 # words anyone could have logged are reported, not acted on
-                route = "auto" if signal.facts.get("trusted") else "review"
+                believed = signal.facts.get("trusted") or ()
+                route = "auto" if believed is True or kind in believed else "review"
                 return Decision(True, kind, severity, 1.0, route, self.name, what)
         return None
 
@@ -273,17 +274,24 @@ def _run(argv, timeout=20):
     return res.returncode, res.stdout, res.stderr
 
 
-TRUSTED_ROOT_WRITERS = ("systemd-oomd", "earlyoom")
+ALL_KINDS = frozenset(STEPS)
+# root daemons whose messages the patterns know, and the one kind each can
+# report: their lines name cgroups and processes, which users choose, so a
+# scope called "I/O error, dev sda" must not read as a disk fault
+TRUSTED_ROOT_WRITERS = {"systemd-oomd": frozenset(("memory",)), "earlyoom": frozenset(("memory",))}
 
 
 def trusted_entry(entry):
-    """True for a journal entry whose words are the kernel's own, or those of
-    one of the few root daemons whose messages the patterns know. journald
-    sets these fields itself; a writer cannot forge them. Not every root
-    process: sudo, cron and others log text that users supply."""
+    """The kinds of problem this journal entry may be believed about: all of
+    them for the kernel's own words, memory for the two memory daemons
+    running as root, none for anything else. journald sets these fields
+    itself; a writer cannot forge them. Not every root process: sudo, cron
+    and others log text that users supply."""
     if entry.get("_TRANSPORT") == "kernel":
-        return True
-    return entry.get("_UID") == "0" and entry.get("_COMM") in TRUSTED_ROOT_WRITERS
+        return ALL_KINDS
+    if entry.get("_UID") == "0":
+        return TRUSTED_ROOT_WRITERS.get(entry.get("_COMM"), frozenset())
+    return frozenset()
 
 
 def journal_signals(since="1h", run=None):
@@ -305,7 +313,7 @@ def journal_signals(since="1h", run=None):
         if not isinstance(msg, str) or not msg.strip():
             continue
         text = " ".join(msg.split())[:MAX_LINE]
-        trusted = trusted_entry(entry)
+        trusted = trusted_entry(entry)      # a frozenset of kinds: hashable, part of the key below
         # the same message with other numbers or addresses counts once; a
         # trusted and an untrusted copy are kept apart, so neither lends the
         # other its standing or its count

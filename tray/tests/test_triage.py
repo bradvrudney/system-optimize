@@ -183,8 +183,14 @@ class JournalTest(unittest.TestCase):
 
     def test_who_is_believed(self):
         T = triage.trusted_entry
-        self.assertTrue(T({"_TRANSPORT": "kernel"}))
-        self.assertTrue(T({"_UID": "0", "_COMM": "systemd-oomd", "_TRANSPORT": "journal"}))
+        self.assertEqual(T({"_TRANSPORT": "kernel"}), triage.ALL_KINDS)
+        self.assertEqual(T({"_UID": "0", "_COMM": "systemd-oomd", "_TRANSPORT": "journal"}), {"memory"})
+        # the memory daemon is believed about memory only: it logs cgroup names, which users choose
+        oomd = {"trusted": T({"_UID": "0", "_COMM": "systemd-oomd"})}
+        named = "Killed /user.slice/app-I/O error, dev sda.scope due to memory pressure"
+        self.assertEqual(triage.Rules().decide(Signal("journal", "systemd-oomd killed 2 processes", oomd)).route, "auto")
+        self.assertEqual(triage.Rules().decide(Signal("journal", IOERR, oomd)).route, "review")
+        self.assertEqual(triage.Rules().decide(Signal("journal", named, oomd)).route, "review")
         # root, but repeating words a user supplied (sudo logs the command line)
         self.assertFalse(T({"_UID": "0", "_COMM": "sudo", "_TRANSPORT": "syslog"}))
         self.assertFalse(T({"_UID": "1000", "_COMM": "systemd-oomd"}))        # a user process with that name
@@ -196,7 +202,7 @@ class JournalTest(unittest.TestCase):
         real = json.dumps({"MESSAGE": OOM.replace("4242", "77"), "_TRANSPORT": "kernel"})
         for raw in ("\n".join([forged] * 5 + [real]), "\n".join([real] + [forged] * 5)):     # either order
             sigs = triage.journal_signals(run=lambda argv, timeout=20: (0, raw, ""))
-            self.assertEqual(sorted((s.facts["trusted"], s.count) for s in sigs), [(False, 5), (True, 1)])
+            self.assertEqual(sorted((bool(s.facts["trusted"]), s.count) for s in sigs), [(False, 5), (True, 1)])
             f = triage.Triage().run(sigs)[0]
             self.assertEqual(f.route, "auto")                   # because the kernel really said it once
         only_forged = "\n".join([forged] * 5)
