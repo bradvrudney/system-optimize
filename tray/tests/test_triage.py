@@ -421,9 +421,10 @@ class TriggerTest(unittest.TestCase):
             backend.Monitor = real
 
     def test_the_tray_fires_too(self):
-        from so_tray.panel import Controller
+        # so_tray.panel imports Qt, so it goes inside the check too.
         try:
             from so_tray.qt import QtWidgets  # noqa: F401
+            from so_tray.panel import Controller
         except ImportError:
             self.skipTest("no Qt binding")
 
